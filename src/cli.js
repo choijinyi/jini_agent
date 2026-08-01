@@ -1,30 +1,33 @@
 import readline from 'node:readline';
-import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig, apiKey, MODELS, DEFAULTS } from './config.js';
 import { Ledger } from './agent/ledger.js';
-import { createSession, runTurn } from './agent/loop.js';
-import { buildTools } from './tools/registry.js';
+import { PROVIDERS, runProvider, doctor } from './providers/index.js';
 
-const HELP = `Jini Agent — 토큰 최소화 코딩 에이전트
+const HELP = `Jini Agent — 다중 AI 코딩 에이전트 (계정 로그인 방식)
 
 사용법
-  jini                      대화형 세션 시작
+  jini                      대화형 세션 (마스터=claude)
   jini "작업 지시"           1회 실행 후 종료
-  jini -p "작업 지시"        동일(파이프 친화)
+  jini --to gemini "질문"    특정 프로바이더에 직접
+  jini panel "질문"          3사 동시 질의 후 나란히 비교
+  jini doctor               CLI 설치·인증 진단
+
+프로바이더 (인증 = 각 CLI 의 계정 로그인 · API 키 불요)
+  claude   오케스트레이션·코딩·심층추론 (마스터)
+  gemini   심층리서치·리뷰
+  codex    코드리뷰·구현 보조
 
 플래그
-  --model <id>       주 모델 (기본 ${DEFAULTS.model})
-  --effort <level>   low|medium|high|xhigh|max (기본 ${DEFAULTS.effort})
-  --max-tokens <n>   응답 상한 (기본 ${DEFAULTS.maxTokens})
-  --yolo             쓰기·실행 도구 승인 생략
-  --no-defer         도구 스키마 지연 로딩 끄기
-  --no-context-edit  오래된 도구 결과 자동 비우기 끄기
+  --to <provider>    이번 요청을 보낼 프로바이더
+  --backend cli|api  cli(기본)=벤더 CLI · api=Anthropic API 키 직접
+  --model <id>       프로바이더 모델 고정
+  --yolo             (api 백엔드) 쓰기·실행 승인 생략
   --help
 
 세션 명령
-  /cost   토큰·비용 원장     /model <id>  모델 교체
-  /effort <lv>  노력 수준    /tools       적재된 도구
-  /clear  대화 초기화        /exit        종료`;
+  /to <provider>  기본 대상 변경     /panel <질문>  3사 동시 질의
+  /doctor  진단                      /cost  토큰·비용 원장
+  /new     세션 새로 시작            /exit  종료`;
 
 function parseArgs(argv) {
   const flags = {};
@@ -35,6 +38,8 @@ function parseArgs(argv) {
     else if (a === '--yolo') flags.autoApprove = true;
     else if (a === '--no-defer') flags.deferTools = false;
     else if (a === '--no-context-edit') flags.contextEditing = false;
+    else if (a === '--backend') flags.backend = argv[++i];
+    else if (a === '--to') flags.to = argv[++i];
     else if (a === '--model') flags.model = argv[++i];
     else if (a === '--effort') flags.effort = argv[++i];
     else if (a === '--max-tokens') flags.maxTokens = Number(argv[++i]);
@@ -44,6 +49,38 @@ function parseArgs(argv) {
   return { flags, prompt: rest.join(' ').trim() };
 }
 
+async function printDoctor() {
+  const rows = await doctor();
+  console.log('프로바이더 진단 (인증 = 계정 로그인)');
+  for (const r of rows) {
+    const mark = r.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+    console.log(`  ${mark} ${r.id.padEnd(7)} ${r.version || '-'}  ${r.role}`);
+    if (r.note) console.log(`      \x1b[33m${r.note}\x1b[0m`);
+  }
+  const bad = rows.filter((r) => !r.ok);
+  if (bad.length) {
+    console.log(
+      `\n미동작 ${bad.length}종 — 각 CLI 를 한 번 직접 실행해 계정 로그인을 마치세요.`
+    );
+  }
+  return rows;
+}
+
+/** CLI 백엔드 1회 호출. 세션 ID 를 보관해 다음 턴에 이어붙인다. */
+async function askProvider(state, id, prompt) {
+  const cfg = state.cfg;
+  const t0 = Date.now();
+  const res = await runProvider(id, prompt, {
+    cwd: cfg.cwd,
+    model: cfg.providerModels?.[id] || undefined,
+    session: state.sessions[id] || undefined,
+  });
+  if (res.session) state.sessions[id] = res.session;
+  state.ledger.addExternal(res.model || `cli:${id}`, res.usage);
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  return { ...res, secs };
+}
+
 export async function main(argv) {
   const { flags, prompt } = parseArgs(argv);
   if (flags.help) {
@@ -51,36 +88,87 @@ export async function main(argv) {
     return;
   }
 
-  const cfg = loadConfig(flags);
-  const client = new Anthropic({ apiKey: apiKey() });
-  const ledger = new Ledger();
-  const session = createSession(cfg, client, ledger);
+  const words = prompt.split(/\s+/);
+  const sub = words[0];
 
-  if (prompt) {
-    await runTurn(session, prompt, async () => cfg.autoApprove);
+  if (sub === 'doctor') {
+    await printDoctor();
+    return;
+  }
+
+  const cfg = loadConfig(flags);
+  const ledger = new Ledger();
+  const state = { cfg, ledger, sessions: {}, target: flags.to || cfg.master };
+
+  if (cfg.backend === 'api') {
+    // 키 방식 경로 — 프롬프트 캐싱·도구 지연 로딩·컨텍스트 편집을 쓸 수 있는 유일한 경로.
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    const { createSession, runTurn } = await import('./agent/loop.js');
+    const client = new Anthropic({ apiKey: apiKey() });
+    const session = createSession(cfg, client, ledger);
+    if (prompt) {
+      await runTurn(session, prompt, async () => cfg.autoApprove);
+      console.error(`\x1b[90m${ledger.format()}\x1b[0m`);
+      return;
+    }
+    return replApi(cfg, ledger, session);
+  }
+
+  if (!PROVIDERS[state.target]) {
+    console.error(`알 수 없는 프로바이더: ${state.target} (${Object.keys(PROVIDERS).join(', ')})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (sub === 'panel') {
+    const q = words.slice(1).join(' ');
+    if (!q) {
+      console.error('사용법: jini panel "질문"');
+      process.exitCode = 1;
+      return;
+    }
+    await panel(state, q);
     console.error(`\x1b[90m${ledger.format()}\x1b[0m`);
     return;
   }
 
+  if (prompt) {
+    const r = await askProvider(state, state.target, prompt);
+    console.log(r.text);
+    console.error(`\x1b[90m[${r.provider} ${r.secs}s] ${ledger.format()}\x1b[0m`);
+    return;
+  }
+
+  await replCli(state);
+}
+
+/** 3사 동시 질의 — 같은 질문을 병렬로 던지고 나란히 출력한다. */
+async function panel(state, question) {
+  const ids = Object.keys(PROVIDERS);
+  console.log(`\x1b[90m3사 동시 질의: ${ids.join(' · ')}\x1b[0m\n`);
+  const results = await Promise.all(
+    ids.map((id) =>
+      askProvider(state, id, question).catch((e) => ({ provider: id, error: e.message }))
+    )
+  );
+  for (const r of results) {
+    console.log(`\x1b[1m── ${r.provider}${r.secs ? ` (${r.secs}s)` : ''} ──\x1b[0m`);
+    console.log(r.error ? `\x1b[31m실패: ${r.error}\x1b[0m` : r.text);
+    console.log();
+  }
+}
+
+async function replCli(state) {
+  const { cfg, ledger } = state;
   console.log(
-    `\x1b[1mJini Agent\x1b[0m  ${cfg.model} · effort=${cfg.effort} · ` +
-      `defer=${cfg.deferTools} · ctx-edit=${cfg.contextEditing}\n` +
+    `\x1b[1mJini Agent\x1b[0m  backend=cli · 마스터=${cfg.master} · 대상=${state.target}\n` +
       `${cfg.cwd}\n/help 로 명령 목록.\n`
   );
-
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise((res) => rl.question(q, res));
 
-  const approve = async (name, input) => {
-    const s = JSON.stringify(input);
-    const a = await ask(
-      `\x1b[33m[승인] ${name} ${s.length > 200 ? s.slice(0, 197) + '...' : s}  (y/N) \x1b[0m`
-    );
-    return /^y(es)?$/i.test(a.trim());
-  };
-
   for (;;) {
-    const line = (await ask('\x1b[36m› \x1b[0m')).trim();
+    const line = (await ask(`\x1b[36m${state.target} › \x1b[0m`)).trim();
     if (!line) continue;
 
     if (line.startsWith('/')) {
@@ -89,39 +177,17 @@ export async function main(argv) {
       if (cmd === 'exit' || cmd === 'quit') break;
       if (cmd === 'help') { console.log(HELP); continue; }
       if (cmd === 'cost') { console.log(ledger.format()); continue; }
-      if (cmd === 'clear') {
-        session.messages.length = 0;
-        session.turnIndex = 0;
-        console.log('대화 초기화(원장은 유지).');
+      if (cmd === 'doctor') { await printDoctor(); continue; }
+      if (cmd === 'new') { state.sessions = {}; console.log('세션 새로 시작(원장은 유지).'); continue; }
+      if (cmd === 'to') {
+        if (!PROVIDERS[arg]) { console.log(`사용 가능: ${Object.keys(PROVIDERS).join(', ')}`); continue; }
+        state.target = arg;
+        console.log(`대상 → ${arg}`);
         continue;
       }
-      if (cmd === 'tools') {
-        console.log(
-          session.tools
-            .map((t) => `${t.name || t.type}${t.defer_loading ? ' (지연)' : ''}`)
-            .join('\n')
-        );
-        continue;
-      }
-      if (cmd === 'model') {
-        if (!MODELS[arg]) { console.log(`사용 가능: ${Object.keys(MODELS).join(', ')}`); continue; }
-        cfg.model = arg;
-        console.log(`모델 → ${arg} (프리픽스 캐시는 모델별이라 다시 채워집니다)`);
-        continue;
-      }
-      if (cmd === 'effort') {
-        if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(arg)) {
-          console.log('low|medium|high|xhigh|max');
-          continue;
-        }
-        cfg.effort = arg;
-        console.log(`effort → ${arg}`);
-        continue;
-      }
-      if (cmd === 'defer') {
-        cfg.deferTools = arg !== 'off';
-        session.tools = buildTools(cfg);
-        console.log(`지연 로딩 → ${cfg.deferTools}`);
+      if (cmd === 'panel') {
+        if (!arg) { console.log('사용법: /panel <질문>'); continue; }
+        try { await panel(state, arg); } catch (e) { console.error(`\x1b[31m[오류]\x1b[0m ${e.message}`); }
         continue;
       }
       console.log(`알 수 없는 명령: /${cmd}`);
@@ -129,13 +195,48 @@ export async function main(argv) {
     }
 
     try {
+      const r = await askProvider(state, state.target, line);
+      console.log(r.text);
+      console.log(`\x1b[90m[${r.provider} ${r.secs}s] ${ledger.format()}\x1b[0m`);
+    } catch (e) {
+      console.error(`\x1b[31m[오류]\x1b[0m ${e.message}`);
+    }
+  }
+  rl.close();
+  console.log(ledger.format());
+}
+
+/** api 백엔드 REPL(M1 경로 유지). */
+async function replApi(cfg, ledger, session) {
+  const { runTurn } = await import('./agent/loop.js');
+  console.log(
+    `\x1b[1mJini Agent\x1b[0m  backend=api · ${cfg.model} · effort=${cfg.effort}\n${cfg.cwd}\n`
+  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  const approve = async (name, input) => {
+    const s = JSON.stringify(input);
+    const a = await ask(`\x1b[33m[승인] ${name} ${s.slice(0, 200)} (y/N) \x1b[0m`);
+    return /^y(es)?$/i.test(a.trim());
+  };
+
+  for (;;) {
+    const line = (await ask('\x1b[36m› \x1b[0m')).trim();
+    if (!line) continue;
+    if (line === '/exit' || line === '/quit') break;
+    if (line === '/cost') { console.log(ledger.format()); continue; }
+    if (line === '/clear') { session.messages.length = 0; console.log('대화 초기화.'); continue; }
+    if (line === '/help') { console.log(HELP); continue; }
+    if (line === '/model') { console.log(Object.keys(MODELS).join(', ')); continue; }
+    try {
       await runTurn(session, line, approve);
       console.log(`\x1b[90m${ledger.format()}\x1b[0m`);
     } catch (e) {
       console.error(`\x1b[31m[오류]\x1b[0m ${e.message}`);
     }
   }
-
   rl.close();
   console.log(ledger.format());
 }
+
+export { DEFAULTS };

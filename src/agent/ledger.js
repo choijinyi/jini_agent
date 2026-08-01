@@ -17,6 +17,24 @@ export class Ledger {
       output: usage.output_tokens || 0,
       cacheRead: usage.cache_read_input_tokens || 0,
       cacheWrite: usage.cache_creation_input_tokens || 0,
+      costUSD: null,
+    });
+  }
+
+  /**
+   * CLI 프로바이더가 돌려준 정규화 usage 를 적재한다.
+   * costUSD 가 있으면(claude CLI) 그 값을 진실로 쓰고, 없으면 모델 단가로 추정한다.
+   * 단가를 모르는 프로바이더(gemini·codex)는 토큰만 집계하고 비용은 0으로 둔다.
+   */
+  addExternal(label, usage) {
+    if (!usage) return;
+    this.rows.push({
+      model: label,
+      input: usage.input || 0,
+      output: usage.output || 0,
+      cacheRead: usage.cacheRead || 0,
+      cacheWrite: usage.cacheWrite || 0,
+      costUSD: typeof usage.costUSD === 'number' ? usage.costUSD : null,
     });
   }
 
@@ -29,8 +47,13 @@ export class Ledger {
       t.cacheRead += r.cacheRead;
       t.cacheWrite += r.cacheWrite;
       t.cost +=
-        (r.input * p.in + r.cacheWrite * p.in * 1.25 + r.cacheRead * p.in * 0.1 + r.output * p.out) /
-        1_000_000;
+        r.costUSD != null
+          ? r.costUSD
+          : (r.input * p.in +
+              r.cacheWrite * p.in * 1.25 +
+              r.cacheRead * p.in * 0.1 +
+              r.output * p.out) /
+            1_000_000;
     }
     return t;
   }

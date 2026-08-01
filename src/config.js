@@ -15,7 +15,16 @@ export const MODELS = {
 };
 
 export const DEFAULTS = {
-  // 주 모델. 기계적 작업만 fastModel 로 라우팅된다(router.js).
+  // 백엔드: 'cli' = 계정 로그인된 벤더 CLI 를 헤드리스로 구동(기본·API 키 불요)
+  //         'api' = Anthropic API 직접 호출(ANTHROPIC_API_KEY 필요)
+  // API 키 경로는 프롬프트 캐싱·도구 지연 로딩·컨텍스트 편집을 쓸 수 있는 유일한 경로라
+  // 선택지로 남겨둔다.
+  backend: 'cli',
+  // 마스터(오케스트레이션) 프로바이더. 나머지는 위임 대상.
+  master: 'claude',
+  // 프로바이더별 모델 고정(null = 각 CLI 의 기본값).
+  providerModels: { claude: null, gemini: null, codex: null },
+  // 주 모델(backend=api 일 때만 사용). 기계적 작업만 fastModel 로 라우팅된다(router.js).
   model: 'claude-opus-5',
   fastModel: 'claude-haiku-4-5',
   // effort: low | medium | high | xhigh | max — 토큰 예산의 1차 레버.
@@ -47,9 +56,12 @@ export function loadConfig(flags = {}) {
   const project = readJson(path.join(process.cwd(), '.jini.json')) || {};
   const cfg = { ...DEFAULTS, ...global, ...project, ...flags };
 
-  if (!MODELS[cfg.model]) {
+  if (cfg.backend === 'api' && !MODELS[cfg.model]) {
     const known = Object.keys(MODELS).join(', ');
     throw new Error(`알 수 없는 모델: ${cfg.model} (사용 가능: ${known})`);
+  }
+  if (!['cli', 'api'].includes(cfg.backend)) {
+    throw new Error(`알 수 없는 백엔드: ${cfg.backend} (cli | api)`);
   }
   cfg.cwd = process.cwd();
   return cfg;

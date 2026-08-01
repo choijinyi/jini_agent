@@ -2,9 +2,18 @@
 
 터미널에서 도는 코딩 에이전트. 기능은 일반적인 코딩 에이전트와 같되, **같은 작업을 더 적은 토큰으로** 끝내는 것을 설계 목표로 삼는다.
 
-- 백엔드: Anthropic Messages API (`@anthropic-ai/sdk`) — 의존성 1개, 빌드 단계 없음
-- 런타임: Node.js 20+
+- **인증: 계정 로그인.** API 키를 쓰지 않는다. 이미 계정으로 로그인된 벤더 CLI를 헤드리스로 구동한다 — CYSJavis가 노드를 띄우는 방식과 같다.
+- **다중 AI**: claude(마스터) · gemini · codex
+- 런타임: Node.js 20+ · 의존성 1개(선택적 API 백엔드용) · 빌드 단계 없음
 - 설치: git 저장소 + 설치 스크립트(`install.ps1` / `install.sh`)
+
+| 프로바이더 | 역할 | 구동 명령(헤드리스) | 인증 |
+|---|---|---|---|
+| `claude` | 오케스트레이션·코딩·심층추론 (**마스터**) | `claude -p --output-format json` | Claude 계정 로그인 |
+| `gemini` | 심층리서치·리뷰 | `gemini -p "" -o json --yolo` | Google 계정 로그인 |
+| `codex` | 코드리뷰·구현 보조 | `codex exec - --json` | ChatGPT 계정 로그인 |
+
+프롬프트는 **항상 stdin**으로 전달한다. argv에는 우리가 정한 플래그와 화이트리스트를 통과한 토큰(모델명·세션ID)만 들어가므로, 인용부호·개행·셸 메타문자로 명령이 깨지거나 주입되지 않는다.
 
 ## 설치
 
@@ -25,14 +34,29 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ## 사용
 
 ```bash
-jini                       # 대화형
-jini "src 의 테스트 실패 원인 찾아"   # 1회 실행
-jini --effort low -p "README 오타 고쳐"
+jini doctor                        # CLI 설치·인증 진단 (먼저 여기부터)
+jini                               # 대화형 (마스터=claude)
+jini "src 의 테스트 실패 원인 찾아"    # 1회 실행
+jini --to gemini "이 논문 요약해"     # 특정 프로바이더로
+jini panel "이 설계의 약점은?"        # 3사 동시 질의 후 나란히 비교
 ```
 
-세션 명령: `/cost` `/model <id>` `/effort <lv>` `/tools` `/clear` `/exit`
+세션 명령: `/to <provider>` `/panel <질문>` `/doctor` `/cost` `/new` `/exit`
 
 ## 토큰을 어디서 아끼는가
+
+레버는 백엔드에 따라 갈린다. 정직하게 말하면 **계정 로그인(CLI) 방식에서는 API 파라미터 레버를 쓸 수 없다** — 컨텍스트 관리가 벤더 하네스 안에서 일어나기 때문이다. 그래서 절감은 오케스트레이션 층에서 이뤄진다.
+
+### A. cli 백엔드 (기본 · 계정 로그인)
+
+| # | 기법 | 구현 위치 |
+|---|---|---|
+| 1 | 작업별 프로바이더 라우팅 — 리서치는 gemini, 리뷰는 codex, 판단은 claude | `--to` · `/to` |
+| 2 | 세션 재사용(`--resume`)으로 컨텍스트 재전송 회피, 필요할 때만 `/new` | `src/cli.js:askProvider` |
+| 3 | 프롬프트 stdin 전달 — 재인용·이스케이프로 인한 중복 텍스트 없음 | `src/providers/index.js` |
+| 4 | 토큰 원장 — claude는 실제 비용(`total_cost_usd`), gemini·codex는 토큰 실측 | `src/agent/ledger.js` |
+
+### B. api 백엔드 (`--backend api` · 키 필요)
 
 | # | 기법 | 구현 위치 | 효과 |
 |---|---|---|---|
@@ -55,6 +79,9 @@ jini --effort low -p "README 오타 고쳐"
 
 ```json
 {
+  "backend": "cli",
+  "master": "claude",
+  "providerModels": { "claude": null, "gemini": null, "codex": null },
   "model": "claude-opus-5",
   "fastModel": "claude-haiku-4-5",
   "effort": "medium",
@@ -82,6 +109,15 @@ npm start          # 로컬 실행
 
 ## 상태
 
-- M1(현재): 에이전트 루프, 파일·검색·셸 도구, 승인, 토큰 원장, 캐싱·지연로딩·컨텍스트편집, 설치 프로그램
-- M2(예정): 서브에이전트 위임, MCP 서버 연결
+- **M1**: api 백엔드 에이전트 루프, 파일·검색·셸 도구, 승인 게이트, 토큰 원장, 설치 프로그램
+- **M1-R(현재)**: 계정 로그인 프로바이더 계층(claude·gemini·codex), `doctor`, `panel`, 세션 재사용
+  - 실측: selftest **20/20** · 3사 왕복 성공(claude 26.3s · codex 30.5s · gemini 12.0s)
+- M2(예정): 프로바이더 간 위임 파이프라인(마스터가 리서치·리뷰를 분배하고 취합), MCP
 - M3(예정): cys 멀티노드 오케스트레이션 통합
+
+### 알려진 공백
+
+- `gemini`는 `GOOGLE_API_KEY`/`GEMINI_API_KEY`가 설정돼 있으면 **계정 로그인 대신 API 키를 우선 사용**한다.
+  계정 로그인으로 돌리려면 두 환경변수를 해제하고 `~/.gemini/settings.json` 의
+  `security.auth.selectedType` 을 `oauth-personal` 로 바꾼 뒤 `gemini` 를 한 번 실행해 로그인한다.
+  `jini doctor` 가 이 상태를 감지해 경고한다.

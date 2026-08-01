@@ -1,0 +1,237 @@
+import { spawn } from 'node:child_process';
+
+/**
+ * 프로바이더 계층 — 계정 로그인으로 인증된 벤더 CLI 를 헤드리스로 1회 실행한다.
+ * API 키를 쓰지 않는 것이 기본값이며, 인증은 각 CLI 가 이미 보유한 계정 세션이다.
+ *
+ * 설계 원칙 3가지
+ *  1) 프롬프트는 **항상 stdin** 으로 넘긴다. argv 에 사용자 텍스트를 싣지 않으므로
+ *     인용부호·개행·셸 메타문자로 명령이 깨지거나 주입되지 않는다.
+ *  2) argv 에는 우리가 정한 플래그와 검증된 토큰(모델명·세션ID)만 들어간다.
+ *  3) 출력 파서는 순수 함수로 분리한다(네트워크 없이 selftest 가 검증).
+ *
+ * 계약은 2026-08-01 실측으로 확인했다:
+ *   claude -p --output-format json          → {result, session_id, usage, total_cost_usd}
+ *   gemini -p "" -o json --yolo             → {response, session_id, stats.models{}.tokens}
+ *   codex exec - --json                     → JSONL(thread.started / item.completed / turn.completed)
+ */
+
+const SAFE = /^[A-Za-z0-9._:@\/-]+$/; // argv 토큰 화이트리스트
+
+function safeToken(v, label) {
+  const s = String(v);
+  if (!SAFE.test(s)) throw new Error(`${label} 에 허용되지 않는 문자: ${s}`);
+  return s;
+}
+
+export const PROVIDERS = {
+  claude: {
+    id: 'claude',
+    bin: 'claude',
+    role: '오케스트레이션·코딩·심층추론',
+    versionArgs: ['--version'],
+    buildArgs({ model, session } = {}) {
+      const a = ['-p', '--output-format', 'json'];
+      if (model) a.push('--model', safeToken(model, 'model'));
+      if (session) a.push('--resume', safeToken(session, 'session'));
+      return a;
+    },
+    parse: parseClaude,
+  },
+  gemini: {
+    id: 'gemini',
+    bin: 'gemini',
+    role: '심층리서치·리뷰',
+    versionArgs: ['--version'],
+    buildArgs({ model, session } = {}) {
+      // -p "" : 헤드리스 모드 진입용. 실제 프롬프트는 stdin 으로 붙는다.
+      const a = ['-p', '', '-o', 'json', '--yolo'];
+      if (model) a.push('-m', safeToken(model, 'model'));
+      if (session) a.push('--resume', safeToken(session, 'session'));
+      return a;
+    },
+    parse: parseGemini,
+  },
+  codex: {
+    id: 'codex',
+    bin: 'codex',
+    role: '코드리뷰·구현 보조',
+    versionArgs: ['--version'],
+    buildArgs({ model } = {}) {
+      const a = ['exec', '-', '--json'];
+      if (model) a.push('-m', safeToken(model, 'model'));
+      return a;
+    },
+    parse: parseCodex,
+  },
+};
+
+// ── 파서(순수 함수) ────────────────────────────────────────────────
+
+/** stdout 앞에 붙는 경고문을 건너뛰고 첫 JSON 객체를 얻는다. */
+export function firstJson(text) {
+  const i = text.indexOf('{');
+  if (i < 0) throw new Error('JSON 을 찾지 못했습니다');
+  return JSON.parse(text.slice(i));
+}
+
+export function parseClaude(stdout) {
+  const d = firstJson(stdout);
+  if (d.is_error) throw new Error(d.result || 'claude 오류');
+  const u = d.usage || {};
+  return {
+    text: d.result ?? '',
+    session: d.session_id || null,
+    usage: {
+      input: u.input_tokens || 0,
+      output: u.output_tokens || 0,
+      cacheRead: u.cache_read_input_tokens || 0,
+      cacheWrite: u.cache_creation_input_tokens || 0,
+      costUSD: typeof d.total_cost_usd === 'number' ? d.total_cost_usd : null,
+    },
+    model: Object.keys(d.modelUsage || {})[0] || null,
+  };
+}
+
+export function parseGemini(stdout) {
+  const d = firstJson(stdout);
+  if (d.error) throw new Error(`${d.error.message || 'gemini 오류'} (code ${d.error.code})`);
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let model = null;
+  const models = d.stats?.models || {};
+  for (const [name, m] of Object.entries(models)) {
+    model = model || name;
+    const t = m.tokens || {};
+    input += t.input || 0;
+    output += t.candidates || 0;
+    cacheRead += t.cached || 0;
+  }
+  return {
+    text: d.response ?? '',
+    session: d.session_id || null,
+    usage: { input, output, cacheRead, cacheWrite: 0, costUSD: null },
+    model,
+  };
+}
+
+export function parseCodex(stdout) {
+  let text = '';
+  let session = null;
+  let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: null };
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith('{')) continue;
+    let e;
+    try {
+      e = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    if (e.type === 'thread.started') session = e.thread_id || session;
+    if (e.type === 'item.completed' && e.item?.type === 'agent_message') text = e.item.text || text;
+    if (e.type === 'error' || e.item?.type === 'error') throw new Error(e.message || 'codex 오류');
+    if (e.type === 'turn.completed' && e.usage) {
+      usage = {
+        input: e.usage.input_tokens || 0,
+        output: e.usage.output_tokens || 0,
+        cacheRead: e.usage.cached_input_tokens || 0,
+        cacheWrite: e.usage.cache_write_input_tokens || 0,
+        costUSD: null,
+      };
+    }
+  }
+  if (!text) throw new Error('codex 응답에서 agent_message 를 찾지 못했습니다');
+  return { text, session, usage, model: null };
+}
+
+// ── 실행 ──────────────────────────────────────────────────────────
+
+function quoteWin(a) {
+  return `"${String(a).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+}
+
+/**
+ * CLI 를 1회 실행한다. 프롬프트는 stdin 으로만 전달된다.
+ * Windows 의 npm 셸(.cmd)은 shell:false 로 실행할 수 없어 cmd.exe 를 경유한다.
+ */
+export function spawnCli(bin, args, { cwd, env, input, timeout = 600_000 } = {}) {
+  return new Promise((resolve) => {
+    const isWin = process.platform === 'win32';
+    const child = isWin
+      ? spawn(
+          process.env.ComSpec || 'cmd.exe',
+          // cmd.exe /c 는 문자열이 따옴표로 시작하면 첫·마지막 따옴표를 벗겨낸다.
+          // 그래서 전체를 한 겹 더 감싼다(감싸지 않으면 `"claude" "--version"` 이
+          // `claude" "--version` 으로 뭉개진다 — 2026-08-01 실측 버그).
+          ['/d', '/s', '/c', `"${[quoteWin(bin), ...args.map(quoteWin)].join(' ')}"`],
+          { cwd, env, windowsVerbatimArguments: true }
+        )
+      : spawn(bin, args, { cwd, env });
+
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+
+    const timer = setTimeout(() => {
+      child.kill();
+      err += `\n[timeout ${timeout}ms]`;
+    }, timeout);
+
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout: out, stderr: `${err}\n[spawn error] ${e.message}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout: out, stderr: err });
+    });
+
+    if (input != null) child.stdin.end(input);
+    else child.stdin.end();
+  });
+}
+
+/**
+ * 프로바이더 1회 호출.
+ * @returns {{text:string, usage:object, session:?string, model:?string, provider:string}}
+ */
+export async function runProvider(id, prompt, { cwd, model, session, timeout } = {}) {
+  const spec = PROVIDERS[id];
+  if (!spec) throw new Error(`알 수 없는 프로바이더: ${id} (${Object.keys(PROVIDERS).join(', ')})`);
+  const args = spec.buildArgs({ model, session });
+  const r = await spawnCli(spec.bin, args, { cwd, input: prompt, timeout });
+  if (r.code !== 0 && !r.stdout.includes('{')) {
+    throw new Error(`${id} 실행 실패(exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 400)}`);
+  }
+  const parsed = spec.parse(r.stdout);
+  return { ...parsed, provider: id };
+}
+
+/**
+ * 설치·인증 진단. 계정 로그인 방식이 실제로 쓰이는지까지 본다.
+ * gemini 는 GOOGLE_API_KEY/GEMINI_API_KEY 가 설정돼 있으면 계정 로그인 대신 키를 쓴다.
+ */
+export async function doctor() {
+  const rows = [];
+  for (const spec of Object.values(PROVIDERS)) {
+    const r = await spawnCli(spec.bin, spec.versionArgs, { timeout: 60_000 });
+    const ok = r.code === 0;
+    const note = [];
+    if (!ok) note.push((r.stderr || r.stdout).split('\n')[0]?.slice(0, 120) || '실행 실패');
+    if (spec.id === 'gemini') {
+      const keyed = ['GOOGLE_API_KEY', 'GEMINI_API_KEY'].filter((k) => process.env[k]);
+      if (keyed.length) note.push(`API 키 우선 적용 중(${keyed.join(', ')}) — 계정 로그인 아님`);
+    }
+    rows.push({
+      id: spec.id,
+      ok,
+      version: ok ? r.stdout.trim().split('\n')[0] : null,
+      role: spec.role,
+      note: note.join(' · '),
+    });
+  }
+  return rows;
+}

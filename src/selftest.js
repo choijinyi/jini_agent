@@ -12,6 +12,7 @@ import { applyCacheBreakpoints } from './agent/loop.js';
 import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
 import { buildSystem } from './agent/system.js';
+import { PROVIDERS, parseClaude, parseGemini, parseCodex } from './providers/index.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -125,6 +126,96 @@ await check('핵심 도구 스키마 무결성', () => {
     assert.ok(t.name && t.description && t.input_schema.type === 'object', t.name);
     assert.ok(t.description.length < 120, `${t.name} 설명이 깁니다(프리픽스 낭비)`);
   }
+});
+
+// ── 프로바이더 계층(계정 로그인 CLI) ─────────────────────────────
+// 픽스처는 2026-08-01 각 CLI 실행에서 실제로 관측한 출력이다(합성 아님).
+
+await check('프로바이더 argv 는 플래그만 — 프롬프트가 argv 에 실리지 않음', () => {
+  for (const spec of Object.values(PROVIDERS)) {
+    const args = spec.buildArgs({});
+    assert.ok(!args.some((a) => a.includes('Reply')), `${spec.id} argv 오염`);
+  }
+  assert.deepEqual(PROVIDERS.claude.buildArgs({}), ['-p', '--output-format', 'json']);
+  assert.deepEqual(PROVIDERS.gemini.buildArgs({}), ['-p', '', '-o', 'json', '--yolo']);
+  assert.deepEqual(PROVIDERS.codex.buildArgs({}), ['exec', '-', '--json']);
+});
+
+await check('argv 토큰 화이트리스트가 주입 문자를 거부', () => {
+  assert.throws(() => PROVIDERS.claude.buildArgs({ model: 'a && rm -rf /' }));
+  assert.throws(() => PROVIDERS.gemini.buildArgs({ session: '"; evil' }));
+  assert.deepEqual(PROVIDERS.claude.buildArgs({ model: 'claude-opus-5' }).slice(-2), [
+    '--model',
+    'claude-opus-5',
+  ]);
+});
+
+await check('claude 출력 파싱(실측 픽스처)', () => {
+  const fixture = JSON.stringify({
+    is_error: false,
+    session_id: '8c8956d9-9922-451b-9079-6c16ec1b07aa',
+    total_cost_usd: 0.3808285,
+    usage: {
+      input_tokens: 2,
+      output_tokens: 4,
+      cache_read_input_tokens: 20817,
+      cache_creation_input_tokens: 37031,
+    },
+    modelUsage: { 'claude-opus-5[1m]': {} },
+    result: 'OK',
+  });
+  const r = parseClaude(fixture);
+  assert.equal(r.text, 'OK');
+  assert.equal(r.session, '8c8956d9-9922-451b-9079-6c16ec1b07aa');
+  assert.equal(r.usage.cacheRead, 20817);
+  assert.equal(r.usage.costUSD, 0.3808285);
+});
+
+await check('gemini 출력 파싱 — 경고문 접두를 건너뛴다(실측 픽스처)', () => {
+  const noisy =
+    'Warning: True color (24-bit) support not detected.\nYOLO mode is enabled.\n' +
+    JSON.stringify({
+      session_id: 'b71deeda-5417-40fe-a2bc-46b54f5f7955',
+      response: 'OK',
+      stats: {
+        models: {
+          'gemini-3.1-flash-lite': { tokens: { input: 2508, candidates: 43, cached: 0 } },
+        },
+      },
+    });
+  const r = parseGemini(noisy);
+  assert.equal(r.text, 'OK');
+  assert.equal(r.usage.input, 2508);
+  assert.equal(r.usage.output, 43);
+  assert.equal(r.model, 'gemini-3.1-flash-lite');
+});
+
+await check('gemini 오류 객체는 예외로 승격', () => {
+  const err = JSON.stringify({ error: { message: 'auth 없음', code: 41 } });
+  assert.throws(() => parseGemini(err), /auth 없음/);
+});
+
+await check('codex JSONL 파싱(실측 픽스처)', () => {
+  const jsonl = [
+    '{"type":"thread.started","thread_id":"019fbae1-f087-7cf2-87e3-32c2d2b28287"}',
+    '{"type":"turn.started"}',
+    '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK2"}}',
+    '{"type":"turn.completed","usage":{"input_tokens":20120,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":6}}',
+  ].join('\n');
+  const r = parseCodex(jsonl);
+  assert.equal(r.text, 'OK2');
+  assert.equal(r.session, '019fbae1-f087-7cf2-87e3-32c2d2b28287');
+  assert.equal(r.usage.input, 20120);
+  assert.equal(r.usage.cacheRead, 11008);
+});
+
+await check('원장: CLI 가 준 실제 비용이 단가 추정보다 우선', () => {
+  const l = new Ledger();
+  l.addExternal('claude-opus-5', { input: 2, output: 4, costUSD: 0.38 });
+  assert.equal(l.totals().cost.toFixed(2), '0.38');
+  l.addExternal('cli:gemini', { input: 2508, output: 43 });
+  assert.equal(l.totals().cost.toFixed(2), '0.38'); // 단가 미상 → 비용 0 가산
+  assert.equal(l.totals().input, 2510);
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });
