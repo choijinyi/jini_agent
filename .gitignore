@@ -1,0 +1,4 @@
+node_modules/
+.jini.json
+*.log
+.DS_Store

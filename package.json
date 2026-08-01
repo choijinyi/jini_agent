@@ -1,0 +1,25 @@
+{
+  "name": "jini-agent",
+  "version": "0.1.0",
+  "description": "Jini Agent - 토큰 최소화 코딩 에이전트 CLI",
+  "type": "module",
+  "bin": {
+    "jini": "./bin/jini.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
+  },
+  "scripts": {
+    "start": "node ./bin/jini.js",
+    "selftest": "node ./src/selftest.js"
+  },
+  "license": "MIT"
+}
