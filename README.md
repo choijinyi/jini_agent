@@ -17,6 +17,21 @@
 
 ## 설치
 
+### 바탕화면 설치 프로그램 (Windows · 더블클릭)
+
+`desktop-launcher.bat` 를 바탕화면에 두고 더블클릭하면 끝난다. 런처는 순수 ASCII 배치
+파일이고(콘솔 코드페이지에 따라 깨지지 않도록), 한글 UI와 실제 로직은 `setup.ps1` 이 맡는다.
+
+```
+Jini Agent 설치.bat  →  setup.ps1  →  install.ps1
+                         │              └ 클론 → npm install → 자기검증 → 셈 생성 → PATH
+                         └ 설치 소스 자동 선택: GitHub 원격(main 존재 시) → 없으면 로컬 저장소
+```
+
+`-Check` 를 붙여 실행하면 설치하지 않고 어느 소스를 쓸지만 확인한다.
+
+### 명령줄 설치
+
 ```powershell
 # Windows
 irm https://raw.githubusercontent.com/choijinyi/jini_agent/main/install.ps1 | iex
