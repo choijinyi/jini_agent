@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 /**
  * 프로바이더 계층 — 계정 로그인으로 인증된 벤더 CLI 를 헤드리스로 1회 실행한다.
@@ -210,28 +213,106 @@ export async function runProvider(id, prompt, { cwd, model, session, timeout } =
   return { ...parsed, provider: id };
 }
 
+// ── 로그인 상태 ───────────────────────────────────────────────────
+
 /**
- * 설치·인증 진단. 계정 로그인 방식이 실제로 쓰이는지까지 본다.
- * gemini 는 GOOGLE_API_KEY/GEMINI_API_KEY 가 설정돼 있으면 계정 로그인 대신 키를 쓴다.
+ * 각 CLI 가 계정 로그인을 남기는 위치(2026-08-01 실측).
+ * 사용자마다 홈이 다르므로 절대경로를 박지 않고 home 을 주입받는다 — 다른 사람의 PC 에서도
+ * 자기 계정 상태가 판정된다.
  */
-export async function doctor() {
+export const LOGIN = {
+  claude: {
+    files: ['.claude/.credentials.json'],
+    envKeys: ['ANTHROPIC_API_KEY'],
+    command: 'claude auth login',
+    guide: '터미널이 열리면 안내에 따라 Anthropic 계정으로 로그인하세요.',
+  },
+  gemini: {
+    files: ['.gemini/google_accounts.json'],
+    envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+    command: 'gemini',
+    guide: '터미널이 열리면 /auth 를 입력하고 "Login with Google" 을 선택하세요.',
+  },
+  codex: {
+    files: ['.codex/auth.json'],
+    envKeys: ['OPENAI_API_KEY'],
+    command: 'codex login',
+    guide: '터미널이 열리면 브라우저로 ChatGPT 계정 로그인이 진행됩니다.',
+  },
+};
+
+/**
+ * 로그인 상태 판정(순수 함수 — home·env 를 주입받아 테스트 가능).
+ * @returns {{ok:boolean, method:'account'|'api-key'|'none', detail:string}}
+ */
+export function checkAuth(id, { home = os.homedir(), env = process.env } = {}) {
+  const spec = LOGIN[id];
+  if (!spec) return { ok: false, method: 'none', detail: '알 수 없는 프로바이더' };
+
+  const hasFile = spec.files.some((f) => fs.existsSync(path.join(home, f)));
+  const keys = spec.envKeys.filter((k) => env[k]);
+
+  // gemini 는 설정에서 API 키 방식을 고르면 계정 로그인이 있어도 키가 우선한다.
+  if (id === 'gemini') {
+    let selected = null;
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(home, '.gemini/settings.json'), 'utf8'));
+      selected = s?.security?.auth?.selectedType || null;
+    } catch { /* 설정 없음 = 미선택 */ }
+    if (selected === 'gemini-api-key' || (keys.length && selected !== 'oauth-personal')) {
+      return { ok: keys.length > 0, method: 'api-key', detail: `API 키 사용 중(${keys.join(', ')})` };
+    }
+    if (hasFile) return { ok: true, method: 'account', detail: 'Google 계정 로그인' };
+    return { ok: false, method: 'none', detail: '로그인 필요' };
+  }
+
+  if (hasFile) return { ok: true, method: 'account', detail: '계정 로그인' };
+  if (keys.length) return { ok: true, method: 'api-key', detail: `API 키 사용 중(${keys.join(', ')})` };
+  return { ok: false, method: 'none', detail: '로그인 필요' };
+}
+
+/**
+ * 설치·로그인 진단. 설치 여부(installed)와 로그인 여부(auth)를 분리해 보고한다 —
+ * "설치는 됐는데 로그인이 안 된" 상태를 사용자에게 정확히 알려주기 위해서다.
+ */
+export async function doctor(opts = {}) {
   const rows = [];
   for (const spec of Object.values(PROVIDERS)) {
     const r = await spawnCli(spec.bin, spec.versionArgs, { timeout: 60_000 });
-    const ok = r.code === 0;
+    const installed = r.code === 0;
+    const auth = installed ? checkAuth(spec.id, opts) : { ok: false, method: 'none', detail: '미설치' };
     const note = [];
-    if (!ok) note.push((r.stderr || r.stdout).split('\n')[0]?.slice(0, 120) || '실행 실패');
-    if (spec.id === 'gemini') {
-      const keyed = ['GOOGLE_API_KEY', 'GEMINI_API_KEY'].filter((k) => process.env[k]);
-      if (keyed.length) note.push(`API 키 우선 적용 중(${keyed.join(', ')}) — 계정 로그인 아님`);
-    }
+    if (!installed) note.push((r.stderr || r.stdout).split('\n')[0]?.slice(0, 120) || '실행 실패');
+    else if (!auth.ok) note.push('로그인 필요');
+    else if (auth.method === 'api-key') note.push(`${auth.detail} — 계정 로그인 아님`);
+
     rows.push({
       id: spec.id,
-      ok,
-      version: ok ? r.stdout.trim().split('\n')[0] : null,
+      ok: installed && auth.ok,
+      installed,
+      auth,
+      version: installed ? r.stdout.trim().split('\n')[0] : null,
       role: spec.role,
+      login: LOGIN[spec.id],
       note: note.join(' · '),
     });
   }
   return rows;
+}
+
+/** 로그인용 터미널 창을 띄운다(대화형 인증은 사람이 마쳐야 한다). */
+export function openLoginTerminal(id) {
+  const spec = LOGIN[id];
+  if (!spec) throw new Error(`알 수 없는 프로바이더: ${id}`);
+  if (process.platform === 'win32') {
+    spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', spec.command], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
+  } else if (process.platform === 'darwin') {
+    spawn('open', ['-a', 'Terminal'], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('x-terminal-emulator', ['-e', spec.command], { detached: true, stdio: 'ignore' }).unref();
+  }
+  return { command: spec.command, guide: spec.guide };
 }

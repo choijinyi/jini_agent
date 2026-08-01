@@ -13,7 +13,7 @@ import { pickEffort } from './agent/router.js';
 import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
 import { buildSystem } from './agent/system.js';
-import { PROVIDERS, parseClaude, parseGemini, parseCodex } from './providers/index.js';
+import { PROVIDERS, parseClaude, parseGemini, parseCodex, checkAuth, LOGIN } from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
@@ -300,6 +300,66 @@ await check('원장: CLI 가 준 실제 비용이 단가 추정보다 우선', (
   l.addExternal('cli:gemini', { input: 2508, output: 43 });
   assert.equal(l.totals().cost.toFixed(2), '0.38'); // 단가 미상 → 비용 0 가산
   assert.equal(l.totals().input, 2510);
+});
+
+// ── 로그인 상태 판정 (가짜 홈으로 검증 — 남의 PC 에서도 옳게 판정되어야 한다) ──
+
+await check('로그인 판정 — 계정 파일 있으면 account', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-home-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude/.credentials.json'), '{}');
+  const a = checkAuth('claude', { home, env: {} });
+  assert.equal(a.ok, true);
+  assert.equal(a.method, 'account');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('로그인 판정 — 아무 것도 없으면 로그인 필요', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-home-'));
+  for (const id of ['claude', 'gemini', 'codex']) {
+    const a = checkAuth(id, { home, env: {} });
+    assert.equal(a.ok, false, id);
+    assert.equal(a.method, 'none', id);
+  }
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('로그인 판정 — API 키만 있으면 api-key 로 구분', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-home-'));
+  const a = checkAuth('claude', { home, env: { ANTHROPIC_API_KEY: 'sk-x' } });
+  assert.equal(a.method, 'api-key');
+  assert.equal(a.ok, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('로그인 판정 — gemini 는 설정이 키 방식이면 계정 파일이 있어도 api-key', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-home-'));
+  fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini/google_accounts.json'), '{}');
+  fs.writeFileSync(
+    path.join(home, '.gemini/settings.json'),
+    JSON.stringify({ security: { auth: { selectedType: 'gemini-api-key' } } })
+  );
+  const keyed = checkAuth('gemini', { home, env: { GEMINI_API_KEY: 'x' } });
+  assert.equal(keyed.method, 'api-key');
+
+  fs.writeFileSync(
+    path.join(home, '.gemini/settings.json'),
+    JSON.stringify({ security: { auth: { selectedType: 'oauth-personal' } } })
+  );
+  const acct = checkAuth('gemini', { home, env: { GEMINI_API_KEY: 'x' } });
+  assert.equal(acct.method, 'account', 'oauth 선택 시 계정 우선');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('로그인 안내 명령이 프로바이더마다 정의돼 있다', () => {
+  for (const id of ['claude', 'gemini', 'codex']) {
+    assert.ok(LOGIN[id].command, id);
+    assert.ok(LOGIN[id].guide, id);
+    assert.ok(LOGIN[id].files.length, id);
+  }
+  assert.equal(LOGIN.claude.command, 'claude auth login');
+  assert.equal(LOGIN.codex.command, 'codex login');
 });
 
 // ── 파이프라인 엔진 (네트워크 없이 주입된 호출자로 검증) ─────────

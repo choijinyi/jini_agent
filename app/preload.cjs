@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('jini', {
   init: () => ipcRenderer.invoke('jini:init'),
   doctor: () => ipcRenderer.invoke('jini:doctor'),
   pickFolder: () => ipcRenderer.invoke('jini:pickFolder'),
+  listDir: () => ipcRenderer.invoke('jini:listDir'),
+  login: (id) => ipcRenderer.invoke('jini:login', { id }),
   ledger: () => ipcRenderer.invoke('jini:ledger'),
   run: (task) => ipcRenderer.invoke('jini:run', { task }),
   ask: (to, prompt) => ipcRenderer.invoke('jini:ask', { to, prompt }),

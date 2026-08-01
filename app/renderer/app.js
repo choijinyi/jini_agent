@@ -143,10 +143,93 @@ input.addEventListener('keydown', (e) => {
   }
 });
 
+/* ── 작업 폴더 ───────────────────────────────────────────── */
+function renderFolder(r) {
+  $('cwd').textContent = r.cwd;
+  $('cwdPath').textContent = r.cwd;
+  const box = $('files');
+  box.innerHTML = '';
+  if (r.error) {
+    box.innerHTML = `<div>읽을 수 없음: ${esc(r.error)}</div>`;
+    return;
+  }
+  r.entries.forEach((e) => {
+    const el = document.createElement('div');
+    el.className = e.dir ? 'd' : '';
+    el.textContent = e.dir ? `${e.name}/` : e.name;
+    box.appendChild(el);
+  });
+  if (r.total > r.entries.length) {
+    const m = document.createElement('div');
+    m.className = 'more';
+    m.textContent = `… 외 ${r.total - r.entries.length}개`;
+    box.appendChild(m);
+  }
+}
+
+async function refreshFolder() {
+  renderFolder(await window.jini.listDir());
+}
+
+$('pick').addEventListener('click', async () => {
+  const r = await window.jini.pickFolder();
+  renderFolder(r);
+  msg('sys', '작업 폴더', `${r.cwd}\n이후 작업은 이 폴더를 기준으로 실행됩니다.`);
+});
+$('folder').addEventListener('click', () => $('pick').click());
+
+/* ── 계정 ────────────────────────────────────────────────── */
+function renderAccounts(rows) {
+  const box = $('accounts');
+  box.innerHTML = '';
+  rows.forEach((r) => {
+    const state = !r.installed || !r.auth.ok ? 'bad' : r.auth.method === 'api-key' ? 'keyed' : 'ok';
+    const el = document.createElement('div');
+    el.className = `acct ${state}`;
+    const how = !r.installed ? '미설치' : r.auth.detail;
+    el.innerHTML = `<i></i><span class="name">${esc(r.id)}</span><span class="how">${esc(how)}</span>`;
+    if (r.installed && state !== 'ok') {
+      const b = document.createElement('button');
+      b.textContent = '로그인';
+      b.onclick = async () => {
+        const res = await window.jini.login(r.id);
+        msg(
+          'sys',
+          `${r.id} 로그인`,
+          res.ok
+            ? `터미널을 열었습니다: ${res.command}\n${res.guide}\n로그인을 마친 뒤 상단 [진단]을 누르세요.`
+            : `실패: ${res.error}`
+        );
+      };
+      el.appendChild(b);
+    }
+    box.appendChild(el);
+    setChip(r.id, state === 'ok' ? 'ok' : state === 'keyed' ? 'busy' : 'bad');
+    const c = chips.get(r.id);
+    if (c) c.title = `${r.role}\n${how}`;
+  });
+}
+
+async function refreshDoctor() {
+  const rows = await window.jini.doctor();
+  renderAccounts(rows);
+  return rows;
+}
+
+$('doctor').addEventListener('click', async () => {
+  const rows = await refreshDoctor();
+  msg(
+    'sys',
+    '진단',
+    rows
+      .map((r) => `${r.ok ? '정상' : '조치필요'}  ${r.id}  ${r.version || '-'}  · ${r.installed ? r.auth.detail : '미설치'}`)
+      .join('\n')
+  );
+});
+
 /* ── 초기화 ──────────────────────────────────────────────── */
 (async () => {
   const info = await window.jini.init();
-  $('cwd').textContent = info.cwd;
   const box = $('providers');
   info.providers.forEach((p) => {
     const c = document.createElement('span');
@@ -156,27 +239,16 @@ input.addEventListener('keydown', (e) => {
     box.appendChild(c);
     chips.set(p.id, c);
   });
-  const rows = await window.jini.doctor();
-  rows.forEach((r) => {
-    setChip(r.id, r.ok ? 'ok' : 'bad');
-    const c = chips.get(r.id);
-    if (c && r.note) c.title = `${r.role}\n${r.note}`;
-  });
-  const led = await window.jini.ledger();
-  $('ledger').textContent = led.text;
+  await refreshFolder();
+  const rows = await refreshDoctor();
+  const need = rows.filter((r) => r.installed && !r.auth.ok);
+  if (need.length) {
+    msg(
+      'sys',
+      '로그인 필요',
+      `${need.map((r) => r.id).join(', ')} — 좌측 [계정]에서 로그인 버튼을 누르세요. 각자 본인 계정으로 로그인합니다.`
+    );
+  }
+  $('ledger').textContent = (await window.jini.ledger()).text;
   input.focus();
 })();
-
-$('folder').addEventListener('click', async () => {
-  const r = await window.jini.pickFolder();
-  $('cwd').textContent = r.cwd;
-});
-
-$('doctor').addEventListener('click', async () => {
-  const rows = await window.jini.doctor();
-  const text = rows
-    .map((r) => `${r.ok ? '정상' : '실패'}  ${r.id}  ${r.version || '-'}${r.note ? `  · ${r.note}` : ''}`)
-    .join('\n');
-  rows.forEach((r) => setChip(r.id, r.ok ? 'ok' : 'bad'));
-  msg('sys', '진단', text);
-});

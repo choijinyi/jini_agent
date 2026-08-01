@@ -73,17 +73,21 @@ async function launchUi() {
 
 async function printDoctor() {
   const rows = await doctor();
-  console.log('프로바이더 진단 (인증 = 계정 로그인)');
+  console.log('프로바이더 진단 (인증 = 본인 계정 로그인)');
   for (const r of rows) {
     const mark = r.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-    console.log(`  ${mark} ${r.id.padEnd(7)} ${r.version || '-'}  ${r.role}`);
+    const how = r.installed ? r.auth.detail : '미설치';
+    console.log(`  ${mark} ${r.id.padEnd(7)} ${(r.version || '-').padEnd(24)} ${how}`);
     if (r.note) console.log(`      \x1b[33m${r.note}\x1b[0m`);
   }
-  const bad = rows.filter((r) => !r.ok);
-  if (bad.length) {
-    console.log(
-      `\n미동작 ${bad.length}종 — 각 CLI 를 한 번 직접 실행해 계정 로그인을 마치세요.`
-    );
+  const needLogin = rows.filter((r) => r.installed && !r.auth.ok);
+  if (needLogin.length) {
+    console.log('\n로그인이 필요합니다 — 아래를 실행하세요:');
+    for (const r of needLogin) console.log(`  ${r.login.command}   (${r.id})`);
+  }
+  const notInstalled = rows.filter((r) => !r.installed);
+  if (notInstalled.length) {
+    console.log(`\n미설치 ${notInstalled.length}종: ${notInstalled.map((r) => r.id).join(', ')}`);
   }
   return rows;
 }

@@ -17,6 +17,16 @@
 
     <main class="grid">
       <aside class="panel">
+        <div class="panel-head">작업 폴더</div>
+        <div class="folder">
+          <button id="pick" class="primary-ghost">폴더 열기</button>
+          <div id="cwdPath" class="cwd-path">…</div>
+          <div id="files" class="files"></div>
+        </div>
+
+        <div class="panel-head">계정</div>
+        <div id="accounts" class="accounts"></div>
+
         <div class="panel-head">파이프라인</div>
         <div id="plan" class="plan">
           <p class="hint">작업을 입력하면 마스터가 단계를 나누고, 의존성이 없는 단계는 동시에 실행됩니다.</p>

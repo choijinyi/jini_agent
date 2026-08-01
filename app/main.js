@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 import { Ledger } from '../src/agent/ledger.js';
 import { Pipeline } from '../src/pipeline/engine.js';
-import { doctor, runProvider, PROVIDERS } from '../src/providers/index.js';
+import { doctor, runProvider, PROVIDERS, openLoginTerminal } from '../src/providers/index.js';
+import fs from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,10 +60,38 @@ ipcMain.handle('jini:init', async () => ({
 ipcMain.handle('jini:doctor', async () => doctor());
 
 ipcMain.handle('jini:pickFolder', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
-  if (r.canceled || !r.filePaths[0]) return { cwd: cfg.cwd };
+  const r = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory'],
+    title: '작업할 폴더 선택',
+  });
+  if (r.canceled || !r.filePaths[0]) return { cwd: cfg.cwd, ...listDir(cfg.cwd) };
   cfg = { ...cfg, cwd: r.filePaths[0] };
-  return { cwd: cfg.cwd };
+  return { cwd: cfg.cwd, ...listDir(cfg.cwd) };
+});
+
+/** 선택한 폴더의 얕은 목록 — 무엇을 대상으로 작업하는지 눈으로 확인시킨다. */
+function listDir(dir) {
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.venv']);
+  try {
+    const all = fs.readdirSync(dir, { withFileTypes: true });
+    const entries = all
+      .filter((e) => !e.name.startsWith('.') && !SKIP.has(e.name))
+      .map((e) => ({ name: e.name, dir: e.isDirectory() }))
+      .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+    return { entries: entries.slice(0, 200), total: all.length, error: null };
+  } catch (e) {
+    return { entries: [], total: 0, error: e.message };
+  }
+}
+
+ipcMain.handle('jini:listDir', async () => ({ cwd: cfg.cwd, ...listDir(cfg.cwd) }));
+
+ipcMain.handle('jini:login', async (_e, { id }) => {
+  try {
+    return { ok: true, ...openLoginTerminal(id) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 });
 
 ipcMain.handle('jini:ledger', async () => ({
