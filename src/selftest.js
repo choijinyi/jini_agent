@@ -472,6 +472,31 @@ await check('리모트: 틀린 토큰은 401, 맞으면 200 · 작업이 실행�
   }
 });
 
+await check('리모트: 폰 홈 화면 설치(PWA) 자산이 토큰 없이도 제공된다', async () => {
+  const token = genToken();
+  const port = 9100 + Math.floor(Math.random() * 90);
+  const srv = createRemoteServer({ token, port, bind: 'localhost', runTask: async () => {} });
+  await srv.start();
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    const man = await fetch(`${base}/manifest.webmanifest`);
+    assert.equal(man.status, 200, '매니페스트는 토큰 없이 200');
+    const j = await man.json();
+    assert.equal(j.display, 'standalone');
+    assert.ok(j.icons.some((i) => i.sizes === '512x512'));
+
+    for (const p of ['/sw.js', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png']) {
+      const r = await fetch(base + p);
+      assert.equal(r.status, 200, `${p} 200 이어야 함`);
+    }
+    // 설치 자산을 열어줘도 실행 경로는 여전히 잠겨 있어야 한다
+    assert.equal((await fetch(`${base}/run`, { method: 'POST', body: '{}' })).status, 401);
+    assert.equal((await fetch(`${base}/`)).status, 401);
+  } finally {
+    await srv.stop();
+  }
+});
+
 await check('리모트: 접속 주소는 bind 에 따라 달라진다', () => {
   const local = buildUrl({ bind: 'localhost', port: 8765, token: 'T' });
   assert.equal(local, 'http://127.0.0.1:8765/?t=T');

@@ -1,6 +1,19 @@
 import http from 'node:http';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets');
+
+function readAsset(name) {
+  try {
+    return fs.readFileSync(path.join(ASSETS, name));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 리모트 컨트롤 — 폰이나 다른 PC 의 브라우저에서 Jini 에 작업을 던진다.
@@ -36,8 +49,38 @@ export function buildUrl({ bind, port, token }) {
   return `http://${host}:${port}/?t=${token}`;
 }
 
+const MANIFEST = JSON.stringify({
+  name: 'Jini Agent',
+  short_name: 'Jini',
+  description: '폰에서 Jini 에이전트를 조종합니다',
+  start_url: './',
+  scope: './',
+  display: 'standalone',
+  background_color: '#0e1116',
+  theme_color: '#0e1116',
+  orientation: 'portrait',
+  icons: [
+    { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+    { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+  ],
+});
+
+// 설치 가능(PWA) 요건을 채우기 위한 최소 서비스 워커. 캐시는 하지 않는다 —
+// 에이전트 응답을 캐시하면 오히려 해롭다.
+const SW = `self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',(e)=>e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch',()=>{});`;
+
 const PAGE = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1116">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jini">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
 <title>Jini 리모트</title><style>
 :root{--bg:#0e1116;--bg2:#171d26;--fg:#e6edf3;--dim:#8b98a9;--accent:#5b9dff;--err:#f85149}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
@@ -58,7 +101,11 @@ button{background:var(--accent);color:#06101f;border:0;border-radius:10px;paddin
 <div id="log"><div class="e"><div class="w">안내</div>작업을 입력하면 이 PC 의 Jini 가 실행합니다.</div></div>
 <form id="f"><textarea id="t" rows="2" placeholder="작업을 입력하세요"></textarea><button>전송</button></form>
 <script>
-const q=new URLSearchParams(location.search),tok=q.get('t')||'';
+// 홈 화면에서 실행하면 주소창이 없어 토큰이 사라진다 — 최초 접속 때 보관해 둔다.
+const q=new URLSearchParams(location.search);
+let tok=q.get('t')||localStorage.getItem('jini_token')||'';
+if(q.get('t'))localStorage.setItem('jini_token',q.get('t'));
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 const log=document.getElementById('log');
 function add(cls,who,text){const d=document.createElement('div');d.className='e '+cls;
 d.innerHTML='<div class="w"></div><div class="b"></div>';
@@ -89,6 +136,15 @@ if(!r.ok)add('err','실패','요청 거부됨 ('+r.status+')');};
  * @param {'localhost'|'lan'} opts.bind
  * @param {(task:string, emit:(type:string,data:object)=>void)=>Promise<void>} opts.runTask
  */
+/** 토큰 없이 제공하는 설치 자산 — 비밀이 아니며, 없으면 홈 화면 설치가 안 된다. */
+const PUBLIC = {
+  '/manifest.webmanifest': { body: MANIFEST, type: 'application/manifest+json; charset=utf-8' },
+  '/sw.js': { body: SW, type: 'text/javascript; charset=utf-8' },
+  '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
+  '/icon-512.png': { file: 'icon-512.png', type: 'image/png' },
+  '/apple-touch-icon.png': { file: 'apple-touch-icon.png', type: 'image/png' },
+};
+
 export function createRemoteServer({ token, port = 8765, bind = 'localhost', runTask }) {
   if (!token) throw new Error('리모트 토큰이 없습니다 — 무인증으로는 열지 않습니다');
 
@@ -110,6 +166,20 @@ export function createRemoteServer({ token, port = 8765, bind = 'localhost', run
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
+
+    // 설치 자산(매니페스트·아이콘·SW)은 토큰 없이 준다. 비밀이 아니고,
+    // 홈 화면 설치 시 브라우저가 토큰 없는 요청으로 가져가기 때문이다.
+    if (req.method === 'GET' && PUBLIC[url.pathname]) {
+      const a = PUBLIC[url.pathname];
+      const body = a.file ? readAsset(a.file) : Buffer.from(a.body);
+      if (!body) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': a.type, 'cache-control': 'no-cache' });
+      res.end(body);
+      return;
+    }
 
     if (!authed(req)) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
