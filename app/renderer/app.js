@@ -18,13 +18,29 @@ function clearWelcome() {
   if (w) w.remove();
 }
 
-function msg(kind, who, text, cls = '') {
+/* 대화 기록 — 창을 닫아도 남고 다음 실행에서 되살아난다. */
+const transcript = [];
+let saveTimer = null;
+
+function saveTranscript() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => window.jini.transcript('save', transcript), 400);
+}
+
+function render(kind, who, text, cls = '') {
   clearWelcome();
   const el = document.createElement('div');
   el.className = `msg ${kind} ${cls}`;
   el.innerHTML = `<div class="who">${esc(who)}</div><div class="body">${esc(text)}</div>`;
   stream.appendChild(el);
   stream.scrollTop = stream.scrollHeight;
+  return el;
+}
+
+function msg(kind, who, text, cls = '') {
+  const el = render(kind, who, text, cls);
+  transcript.push({ kind, who, text, cls, at: Date.now() });
+  saveTranscript();
   return el;
 }
 
@@ -292,21 +308,13 @@ async function refreshMaster() {
     : '아직 없음 — 작업을 한 번 실행하면 생깁니다.';
 }
 
-$('openMaster').addEventListener('click', async () => {
-  const r = await window.jini.openMaster();
-  msg(
-    'sys',
-    '마스터 세션',
-    r.ok
-      ? `Claude Code 터미널을 열었습니다: ${r.command}\nJini 가 하고 있는 그 대화를 그대로 이어받습니다.`
-      : r.error
-  );
-});
-
 $('newSession').addEventListener('click', async () => {
   await window.jini.newSession();
+  transcript.length = 0;
+  await window.jini.transcript('clear');
+  stream.innerHTML = '';
   await refreshMaster();
-  msg('sys', '세션', '새 대화로 시작합니다(이전 문맥을 잇지 않습니다).');
+  msg('sys', '세션', '새 대화로 시작합니다(이전 문맥과 기록을 잇지 않습니다).');
 });
 
 /* ── 설정 ────────────────────────────────────────────────── */
@@ -423,6 +431,21 @@ document.addEventListener('keydown', (e) => {
     box.appendChild(c);
     chips.set(p.id, c);
   });
+  // 지난 대화 복원 — 창을 닫아도 작업 기록이 남는다.
+  const prev = await window.jini.transcript('get');
+  if (prev?.length) {
+    clearWelcome();
+    prev.forEach((e) => {
+      transcript.push(e);
+      render(e.kind, e.who, e.text, e.cls || '');
+    });
+    const d = document.createElement('div');
+    d.className = 'divider';
+    d.textContent = `── 여기까지 지난 대화 (${prev.length}건) ──`;
+    stream.appendChild(d);
+    stream.scrollTop = stream.scrollHeight;
+  }
+
   await refreshFolder();
   await refreshMaster();
   if (info.isHome) {

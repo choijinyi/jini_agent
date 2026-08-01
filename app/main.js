@@ -276,14 +276,29 @@ ipcMain.handle('jini:master', async () => {
   return { provider: cfg.master || 'claude', session: id, attach: id ? `claude --resume ${id}` : null };
 });
 
-/** 마스터가 지금 하고 있는 그 대화를 Claude Code 터미널로 연다. */
-ipcMain.handle('jini:openMaster', async () => {
-  const { openTerminal } = await import('../src/providers/index.js');
-  const id = sessions[cfg.master || 'claude'];
-  if (!id) return { ok: false, error: '아직 마스터 세션이 없습니다. 작업을 한 번 실행하세요.' };
-  const command = `claude --resume ${id}`;
-  openTerminal(command);
-  return { ok: true, command };
+/**
+ * 대화 기록 — 창을 닫아도 남고 다음 실행에서 복원된다.
+ * 최근 400건만 유지한다(파일이 무한히 커지지 않게).
+ */
+const TRANSCRIPT_MAX = 400;
+const transcriptFile = () => path.join(app.getPath('userData'), 'transcript.json');
+
+ipcMain.handle('jini:transcript', async (_e, { action, entries } = {}) => {
+  try {
+    if (action === 'save') {
+      const trimmed = Array.isArray(entries) ? entries.slice(-TRANSCRIPT_MAX) : [];
+      fs.writeFileSync(transcriptFile(), JSON.stringify(trimmed));
+      return { ok: true, count: trimmed.length };
+    }
+    if (action === 'clear') {
+      fs.writeFileSync(transcriptFile(), '[]');
+      log('대화 기록 지움');
+      return { ok: true };
+    }
+    return JSON.parse(fs.readFileSync(transcriptFile(), 'utf8'));
+  } catch {
+    return action === 'get' ? [] : { ok: false };
+  }
 });
 
 ipcMain.handle('jini:newSession', async () => {
