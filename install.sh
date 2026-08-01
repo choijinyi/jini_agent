@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Jini Agent 설치 (macOS / Linux / WSL / Git Bash)
 #
-#   curl -fsSL https://raw.githubusercontent.com/<OWNER>/jini-agent/main/install.sh | bash
-#   JINI_REPO=https://github.com/<OWNER>/jini-agent.git bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/choijinyi/jini_agent/main/install.sh | bash
+#   JINI_REPO=https://github.com/choijinyi/jini_agent.git bash install.sh
 set -euo pipefail
 
-REPO="${JINI_REPO:-https://github.com/OWNER/jini-agent.git}"
+REPO="${JINI_REPO:-https://github.com/choijinyi/jini_agent.git}"
 REF="${JINI_REF:-main}"
 DIR="${JINI_DIR:-$HOME/.jini-agent}"
 BIN_DIR="${JINI_BIN:-$HOME/.local/bin}"

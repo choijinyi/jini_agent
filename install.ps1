@@ -4,15 +4,15 @@
 
 .EXAMPLE
   # 원격 1줄 설치
-  irm https://raw.githubusercontent.com/<OWNER>/jini-agent/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/choijinyi/jini_agent/main/install.ps1 | iex
 
 .EXAMPLE
   # 저장소를 지정해 설치
-  .\install.ps1 -Repo https://github.com/<OWNER>/jini-agent.git
+  .\install.ps1 -Repo https://github.com/choijinyi/jini_agent.git
 #>
 [CmdletBinding()]
 param(
-  [string]$Repo = $(if ($env:JINI_REPO) { $env:JINI_REPO } else { 'https://github.com/OWNER/jini-agent.git' }),
+  [string]$Repo = $(if ($env:JINI_REPO) { $env:JINI_REPO } else { 'https://github.com/choijinyi/jini_agent.git' }),
   [string]$Ref = 'main',
   [string]$Dir = (Join-Path $env:LOCALAPPDATA 'jini-agent')
 )

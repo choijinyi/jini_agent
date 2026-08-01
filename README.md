@@ -10,13 +10,13 @@
 
 ```powershell
 # Windows
-irm https://raw.githubusercontent.com/<OWNER>/jini-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/choijinyi/jini_agent/main/install.ps1 | iex
 [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY","sk-ant-...","User")
 ```
 
 ```bash
 # macOS / Linux / WSL
-curl -fsSL https://raw.githubusercontent.com/<OWNER>/jini-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/choijinyi/jini_agent/main/install.sh | bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
