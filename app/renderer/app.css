@@ -129,6 +129,11 @@ body {
 }
 .primary-ghost:hover { background: var(--accent); color: #06101f; }
 .cwd-path { font-size: 11px; color: var(--dim); margin: 7px 0 6px; word-break: break-all; }
+.reset-btn {
+  width: 100%; margin-top: 6px; background: transparent; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.reset-btn:hover { color: var(--fg); border-color: var(--accent); }
 .files { max-height: 150px; overflow-y: auto; font-size: 12px; }
 .files div { padding: 1px 0; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .files div.d { color: var(--fg); }

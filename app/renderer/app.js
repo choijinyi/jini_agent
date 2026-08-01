@@ -140,6 +140,9 @@ window.jini.onEvent(({ type, data }) => {
     case 'ledger':
       $('ledger').textContent = data.text;
       break;
+    case 'session':
+      refreshMaster();
+      break;
   }
 });
 
@@ -281,6 +284,31 @@ $('doctor').addEventListener('click', async () => {
   );
 });
 
+/* ── 마스터 세션 ─────────────────────────────────────────── */
+async function refreshMaster() {
+  const m = await window.jini.master();
+  $('sessionInfo').textContent = m.session
+    ? `${m.provider} · ${m.session.slice(0, 8)}…  (${m.attach})`
+    : '아직 없음 — 작업을 한 번 실행하면 생깁니다.';
+}
+
+$('openMaster').addEventListener('click', async () => {
+  const r = await window.jini.openMaster();
+  msg(
+    'sys',
+    '마스터 세션',
+    r.ok
+      ? `Claude Code 터미널을 열었습니다: ${r.command}\nJini 가 하고 있는 그 대화를 그대로 이어받습니다.`
+      : r.error
+  );
+});
+
+$('newSession').addEventListener('click', async () => {
+  await window.jini.newSession();
+  await refreshMaster();
+  msg('sys', '세션', '새 대화로 시작합니다(이전 문맥을 잇지 않습니다).');
+});
+
 /* ── 설정 ────────────────────────────────────────────────── */
 const GROUP_LABEL = { cli: '계정 로그인 백엔드', both: '공통', api: 'API 백엔드 전용' };
 
@@ -396,6 +424,7 @@ document.addEventListener('keydown', (e) => {
     chips.set(p.id, c);
   });
   await refreshFolder();
+  await refreshMaster();
   if (info.isHome) {
     msg(
       'sys',

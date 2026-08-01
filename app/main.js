@@ -77,8 +77,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  const saved = loadState().cwd;
-  if (saved && fs.existsSync(saved)) cfg = { ...cfg, cwd: saved };
+  const st = loadState();
+  if (st.cwd && fs.existsSync(st.cwd)) cfg = { ...cfg, cwd: st.cwd };
+  if (st.sessions && typeof st.sessions === 'object') sessions = st.sessions;
   log('시작 · cwd =', cfg.cwd, '· 로그 =', logFile());
   createWindow();
   syncRemote();
@@ -263,8 +264,38 @@ ipcMain.handle('jini:ledger', async () => ({
 }));
 
 /** 파이프라인 실행 — 진행 상황을 이벤트로 중계한다. */
+/** 마스터 세션 id — 창을 껐다 켜도 대화가 이어지도록 디스크에 남긴다. */
+let sessions = {};
+
+ipcMain.handle('jini:master', async () => {
+  const id = sessions[cfg.master || 'claude'] || null;
+  return { provider: cfg.master || 'claude', session: id, attach: id ? `claude --resume ${id}` : null };
+});
+
+/** 마스터가 지금 하고 있는 그 대화를 Claude Code 터미널로 연다. */
+ipcMain.handle('jini:openMaster', async () => {
+  const { openTerminal } = await import('../src/providers/index.js');
+  const id = sessions[cfg.master || 'claude'];
+  if (!id) return { ok: false, error: '아직 마스터 세션이 없습니다. 작업을 한 번 실행하세요.' };
+  const command = `claude --resume ${id}`;
+  openTerminal(command);
+  return { ok: true, command };
+});
+
+ipcMain.handle('jini:newSession', async () => {
+  sessions = {};
+  saveState({ sessions });
+  log('세션 초기화');
+  return { ok: true };
+});
+
 ipcMain.handle('jini:run', async (_e, { task }) => {
-  const p = new Pipeline(cfg, ledger);
+  const p = new Pipeline(cfg, ledger, undefined, sessions);
+  p.on('session', (d) => {
+    sessions[d.provider] = d.session;
+    saveState({ sessions });
+    send('jini:event', { type: 'session', data: d });
+  });
   for (const ev of ['plan:start', 'plan:done', 'batch:start', 'step:start', 'step:done', 'step:error']) {
     p.on(ev, (d) => {
       send('jini:event', { type: ev, data: d });

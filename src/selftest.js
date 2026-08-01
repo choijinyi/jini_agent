@@ -607,6 +607,43 @@ await check('파이프라인 실행 — 독립 단계가 실제로 병렬로 돈
   assert.equal(led.totals().calls, 5); // 계획 1 + 단계 3 + 취합 1
 });
 
+await check('마스터 세션만 이어붙인다(단계 호출은 새 세션 — 병렬 충돌 방지)', async () => {
+  const plan = JSON.stringify({
+    steps: [
+      { id: 'a', to: 'claude', prompt: 'x', dependsOn: [] },
+      { id: 'b', to: 'gemini', prompt: 'y', dependsOn: [] },
+    ],
+  });
+  const seen = [];
+  const call = async (id, prompt, meta) => {
+    seen.push({ id, session: meta?.session ?? null, kind: prompt.slice(0, 24) });
+    if (prompt.startsWith('You are the master orchestrator of a multi-agent')) {
+      return { text: plan, session: 'SID-1', usage: {} };
+    }
+    if (prompt.startsWith('You are the master orchestrator. Below are')) {
+      return { text: '취합', session: 'SID-1', usage: {} };
+    }
+    return { text: 'ok', session: 'STEP-SID', usage: {} };
+  };
+  const store = {};
+  const p = new Pipeline({ cwd: tmp, master: 'claude' }, new Ledger(), call, store);
+  await p.run('작업');
+
+  const planCall = seen[0];
+  const synth = seen[seen.length - 1];
+  assert.equal(planCall.session, null, '첫 계획은 세션 없음');
+  assert.equal(synth.session, 'SID-1', '취합은 계획 세션을 이어받아야 함');
+  const stepCalls = seen.filter((s) => !s.kind.startsWith('You are the master'));
+  assert.ok(stepCalls.length >= 2);
+  for (const s of stepCalls) assert.equal(s.session, null, '단계 호출은 세션을 물지 않는다');
+  assert.equal(store.claude, 'SID-1', '마스터 세션이 보관함에 남아야 함');
+
+  // 두 번째 턴은 처음부터 이어붙는다
+  seen.length = 0;
+  await p.run('다음 작업');
+  assert.equal(seen[0].session, 'SID-1', '다음 턴 계획이 세션을 이어받지 않음');
+});
+
 await check('단일 단계는 취합 호출을 생략한다(왕복 절약)', async () => {
   const plan = JSON.stringify({ steps: [{ id: 'only', to: 'claude', prompt: 'x', dependsOn: [] }] });
   const call = async (id, prompt) =>

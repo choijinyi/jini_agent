@@ -125,19 +125,36 @@ export class Pipeline extends EventEmitter {
    * @param {object} ledger 토큰 원장
    * @param {function} [call] 프로바이더 호출자 주입(테스트용 — 기본은 실제 CLI 호출)
    */
-  constructor(cfg, ledger, call) {
+  /**
+   * @param {object} sessions 프로바이더별 세션 id 보관함(호출자가 소유해 영속화한다)
+   */
+  constructor(cfg, ledger, call, sessions = {}) {
     super();
     this.cfg = cfg;
     this.ledger = ledger;
+    this.sessions = sessions;
     this.call =
       call ||
-      ((id, prompt) =>
-        runProvider(id, prompt, { cwd: cfg.cwd, model: cfg.providerModels?.[id] || undefined }));
+      ((id, prompt, meta) =>
+        runProvider(id, prompt, {
+          cwd: cfg.cwd,
+          model: cfg.providerModels?.[id] || undefined,
+          session: meta?.session,
+        }));
   }
 
-  async #ask(id, prompt, meta) {
+  /**
+   * @param {boolean} [opts.keepSession] 마스터 대화만 세션을 이어붙인다.
+   *   단계 호출까지 같은 세션을 쓰면 병렬 단계가 한 세션을 동시에 물어 충돌한다.
+   */
+  async #ask(id, prompt, opts = {}) {
     const t0 = Date.now();
-    const res = await this.call(id, prompt, meta);
+    const session = opts.keepSession ? this.sessions[id] : undefined;
+    const res = await this.call(id, prompt, { ...opts, session });
+    if (opts.keepSession && res.session) {
+      this.sessions[id] = res.session;
+      this.emit('session', { provider: id, session: res.session });
+    }
     this.ledger?.addExternal(res.model || `cli:${id}`, res.usage);
     return { ...res, ms: Date.now() - t0 };
   }
@@ -147,7 +164,9 @@ export class Pipeline extends EventEmitter {
     const master = this.cfg.master || 'claude';
     try {
       this.emit('plan:start', { master, task });
-      const planRes = await this.#ask(master, buildPlanPrompt(task, { cwd: this.cfg.cwd }));
+      const planRes = await this.#ask(master, buildPlanPrompt(task, { cwd: this.cfg.cwd }), {
+        keepSession: true,
+      });
       const steps = parsePlan(planRes.text);
       const batches = toBatches(steps);
       this.emit('plan:done', { steps, batches: batches.map((b) => b.map((s) => s.id)) });
@@ -179,7 +198,7 @@ export class Pipeline extends EventEmitter {
       const single = steps.length === 1 && !results[steps[0].id].error;
       const final = single
         ? results[steps[0].id].text // 단일 단계는 취합 호출을 생략한다(불필요한 왕복 제거)
-        : (await this.#ask(master, buildSynthesisPrompt(task, results))).text;
+        : (await this.#ask(master, buildSynthesisPrompt(task, results), { keepSession: true })).text;
 
       this.emit('run:done', { final, results, steps });
       return { final, results, steps };

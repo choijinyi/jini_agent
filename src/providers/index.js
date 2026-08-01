@@ -362,7 +362,7 @@ export const INSTALL = {
 export const installCommand = (id) => `npm install -g ${INSTALL[id].pkg}`;
 
 /** 터미널 창을 띄워 명령을 실행한다(진행 상황을 사용자가 직접 본다). */
-function openTerminal(command) {
+export function openTerminal(command) {
   if (process.platform === 'win32') {
     spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', command], {
       detached: true,
