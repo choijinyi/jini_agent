@@ -65,6 +65,40 @@ function stepState(id, state, label) {
   if (s) s.textContent = label;
 }
 
+/* 진행 중 경과 시간 — 긴 단계에서 화면이 멈춘 것처럼 보이지 않게 한다. */
+const running = new Map(); // id -> 시작 시각
+let ticker = null;
+
+function tick() {
+  const now = Date.now();
+  for (const [id, t0] of running) {
+    const el = document.getElementById(`step-${id}`);
+    const s = el?.querySelector('.step-state');
+    if (s) s.textContent = `${Math.round((now - t0) / 1000)}s…`;
+  }
+  const el = $('elapsed');
+  if (el) {
+    el.textContent = running.size
+      ? `실행 중 ${running.size}개 · ${Math.round((now - Math.min(...running.values())) / 1000)}s`
+      : '';
+  }
+}
+
+function startTick(id) {
+  running.set(id, Date.now());
+  if (!ticker) ticker = setInterval(tick, 1000);
+  tick();
+}
+
+function stopTick(id) {
+  running.delete(id);
+  if (!running.size && ticker) {
+    clearInterval(ticker);
+    ticker = null;
+  }
+  tick();
+}
+
 /* ── 이벤트 구독 ─────────────────────────────────────────── */
 window.jini.onEvent(({ type, data }) => {
   switch (type) {
@@ -81,15 +115,18 @@ window.jini.onEvent(({ type, data }) => {
       break;
     }
     case 'step:start':
-      stepState(data.id, 'running', '실행 중');
+      stepState(data.id, 'running', '0s…');
+      startTick(data.id);
       setChip(data.to, 'busy');
       break;
     case 'step:done':
+      stopTick(data.id);
       stepState(data.id, 'done', data.ms ? `${(data.ms / 1000).toFixed(1)}s` : '완료');
       setChip(data.provider, 'ok');
       msg('agent', data.provider, data.text, data.provider);
       break;
     case 'step:error':
+      stopTick(data.id);
       stepState(data.id, 'error', '실패');
       setChip(data.to, 'bad');
       msg('error', data.to, data.error);

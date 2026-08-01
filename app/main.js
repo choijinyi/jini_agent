@@ -157,7 +157,12 @@ ipcMain.handle('jini:ledger', async () => ({
 ipcMain.handle('jini:run', async (_e, { task }) => {
   const p = new Pipeline(cfg, ledger);
   for (const ev of ['plan:start', 'plan:done', 'batch:start', 'step:start', 'step:done', 'step:error']) {
-    p.on(ev, (d) => send('jini:event', { type: ev, data: d }));
+    p.on(ev, (d) => {
+      send('jini:event', { type: ev, data: d });
+      // 원장은 실행이 끝난 뒤가 아니라 매 이벤트마다 밀어준다 —
+      // 계획 호출부터 값이 잡히므로 진행 중에도 토큰·비용이 움직인다.
+      send('jini:event', { type: 'ledger', data: { text: ledger.format() } });
+    });
   }
   log('run 시작 · cwd =', cfg.cwd, '· task =', task.slice(0, 120));
   try {

@@ -188,4 +188,6 @@ body {
 }
 .composer button:disabled { opacity: .5; cursor: default; }
 
-.ledger { padding: 6px 24px 10px; font-size: 11px; color: var(--dim); background: var(--bg-2); border-top: 1px solid var(--line); }
+.ledger { padding: 6px 24px 10px; font-size: 11px; color: var(--dim); background: var(--bg-2); border-top: 1px solid var(--line); display: flex; gap: 12px; }
+.elapsed { color: var(--accent); font-variant-numeric: tabular-nums; }
+.elapsed:not(:empty)::before { content: "⏳ "; }
