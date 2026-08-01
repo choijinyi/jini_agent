@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Jini Agent</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">Jini<span>Agent</span></div>
+      <button id="folder" class="ghost" title="작업 폴더 변경"><span id="cwd">…</span></button>
+      <div class="spacer"></div>
+      <div id="providers" class="providers"></div>
+      <button id="doctor" class="ghost">진단</button>
+    </header>
+
+    <main class="grid">
+      <aside class="panel">
+        <div class="panel-head">파이프라인</div>
+        <div id="plan" class="plan">
+          <p class="hint">작업을 입력하면 마스터가 단계를 나누고, 의존성이 없는 단계는 동시에 실행됩니다.</p>
+        </div>
+      </aside>
+
+      <section class="stream-wrap">
+        <div id="stream" class="stream">
+          <div class="welcome">
+            <h1>무엇을 할까요?</h1>
+            <p>마스터(claude)가 작업을 쪼개 gemini·codex에 병렬로 위임하고 결과를 취합합니다.</p>
+            <p class="dim">특정 AI에게 바로 물으려면 <code>@gemini 질문</code> 처럼 앞에 붙이세요.</p>
+          </div>
+        </div>
+        <form id="composer" class="composer">
+          <textarea id="input" rows="3" placeholder="작업을 입력하세요.  Enter 전송 · Shift+Enter 줄바꿈"></textarea>
+          <button id="send" type="submit">전송</button>
+        </form>
+        <div id="ledger" class="ledger"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

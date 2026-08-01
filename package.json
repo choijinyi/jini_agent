@@ -12,13 +12,16 @@
   "files": [
     "bin",
     "src",
+    "app",
     "README.md"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.70.0"
+    "@anthropic-ai/sdk": "^0.70.0",
+    "electron": "^43.2.0"
   },
   "scripts": {
     "start": "node ./bin/jini.js",
+    "ui": "electron ./app",
     "selftest": "node ./src/selftest.js"
   },
   "license": "MIT"

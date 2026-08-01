@@ -68,6 +68,26 @@ Set-Content -Path (Join-Path $shimDir 'jini.cmd') -Encoding ascii -Value @"
 node "$entry" %*
 "@
 
+# 5-1. 바탕화면 앱 바로가기 — Electron 창을 콘솔 없이 띄운다
+$electron = Join-Path $Dir 'node_modules\electron\dist\electron.exe'
+if (Test-Path $electron) {
+  try {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $ws = New-Object -ComObject WScript.Shell
+    $lnk = $ws.CreateShortcut((Join-Path $desktop 'Jini Agent.lnk'))
+    $lnk.TargetPath = $electron
+    $lnk.Arguments = "`"$(Join-Path $Dir 'app')`""
+    $lnk.WorkingDirectory = $env:USERPROFILE
+    $lnk.Description = 'Jini Agent - 다중 AI 코딩 에이전트'
+    $lnk.Save()
+    Info '바탕화면 바로가기 생성: Jini Agent'
+  } catch {
+    Warn "바로가기 생성 실패(무시 가능): $($_.Exception.Message)"
+  }
+} else {
+  Warn 'Electron 이 없어 창 앱 바로가기를 만들지 않았습니다(CLI 는 정상 동작).'
+}
+
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$shimDir*") {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$shimDir", 'User')
@@ -76,5 +96,5 @@ if ($userPath -notlike "*$shimDir*") {
 $env:Path = "$env:Path;$shimDir"
 
 Info "설치 완료: $Dir"
-Info '다음 단계: jini doctor 로 claude·gemini·codex 계정 로그인 상태를 확인하세요.'
-Info '실행: jini'
+Info '창 앱: 바탕화면의 "Jini Agent" 아이콘을 더블클릭'
+Info '터미널: jini (대화) · jini ui (창) · jini doctor (계정 로그인 진단)'

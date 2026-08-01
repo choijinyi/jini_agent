@@ -49,6 +49,28 @@ function parseArgs(argv) {
   return { flags, prompt: rest.join(' ').trim() };
 }
 
+/** Electron 창을 띄운다. 전역 설치가 아닌 로컬 electron 바이너리를 쓴다. */
+async function launchUi() {
+  const { spawn } = await import('node:child_process');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'app');
+
+  let electronPath;
+  try {
+    ({ default: electronPath } = await import('electron'));
+  } catch {
+    console.error(
+      'Electron 이 설치돼 있지 않습니다. 설치 폴더에서 실행하세요:\n  npm install --omit=dev'
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const child = spawn(electronPath, [appDir], { stdio: 'inherit', windowsHide: false });
+  await new Promise((res) => child.on('close', res));
+}
+
 async function printDoctor() {
   const rows = await doctor();
   console.log('프로바이더 진단 (인증 = 계정 로그인)');
@@ -94,6 +116,10 @@ export async function main(argv) {
   if (sub === 'doctor') {
     await printDoctor();
     return;
+  }
+
+  if (sub === 'ui' || sub === 'app') {
+    return launchUi();
   }
 
   const cfg = loadConfig(flags);

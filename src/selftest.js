@@ -14,6 +14,7 @@ import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
 import { buildSystem } from './agent/system.js';
 import { PROVIDERS, parseClaude, parseGemini, parseCodex } from './providers/index.js';
+import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -299,6 +300,135 @@ await check('원장: CLI 가 준 실제 비용이 단가 추정보다 우선', (
   l.addExternal('cli:gemini', { input: 2508, output: 43 });
   assert.equal(l.totals().cost.toFixed(2), '0.38'); // 단가 미상 → 비용 0 가산
   assert.equal(l.totals().input, 2510);
+});
+
+// ── 파이프라인 엔진 (네트워크 없이 주입된 호출자로 검증) ─────────
+
+await check('계획 파싱 — 형식 위반은 예외로 승격', () => {
+  const ok = parsePlan('{"steps":[{"id":"s1","to":"claude","prompt":"do","dependsOn":[]}]}');
+  assert.equal(ok.length, 1);
+  assert.deepEqual(ok[0].dependsOn, []);
+  // 앞뒤 잡담이 섞여도 첫 { ~ 마지막 } 로 복구한다
+  assert.equal(parsePlan('설명\n{"steps":[{"id":"a","to":"gemini","prompt":"x"}]}\n끝')[0].id, 'a');
+  assert.throws(() => parsePlan('no json'), /JSON 을 찾지 못/);
+  assert.throws(() => parsePlan('{"steps":[]}'), /비어 있/);
+  assert.throws(() => parsePlan('{"steps":[{"id":"a","to":"gpt5","prompt":"x"}]}'), /알 수 없는 프로바이더/);
+  assert.throws(
+    () => parsePlan('{"steps":[{"id":"a","to":"claude","prompt":"x"},{"id":"a","to":"claude","prompt":"y"}]}'),
+    /중복 step.id/
+  );
+  assert.throws(
+    () => parsePlan('{"steps":[{"id":"a","to":"claude","prompt":"x","dependsOn":["zz"]}]}'),
+    /알 수 없는 의존/
+  );
+});
+
+await check('배치 분할 — 독립 단계는 같은 배치(병렬), 순환은 예외', () => {
+  const steps = parsePlan(
+    JSON.stringify({
+      steps: [
+        { id: 'a', to: 'gemini', prompt: 'r1', dependsOn: [] },
+        { id: 'b', to: 'codex', prompt: 'r2', dependsOn: [] },
+        { id: 'c', to: 'claude', prompt: 'merge', dependsOn: ['a', 'b'] },
+      ],
+    })
+  );
+  const batches = toBatches(steps);
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches[0].map((s) => s.id).sort(), ['a', 'b']);
+  assert.deepEqual(batches[1].map((s) => s.id), ['c']);
+
+  const cyclic = [
+    { id: 'x', to: 'claude', prompt: 'p', dependsOn: ['y'] },
+    { id: 'y', to: 'claude', prompt: 'p', dependsOn: ['x'] },
+  ];
+  assert.throws(() => toBatches(cyclic), /순환 의존/);
+});
+
+await check('의존 산출물이 다음 단계 프롬프트에 주입된다', () => {
+  const step = { id: 'c', to: 'claude', prompt: '합쳐라', dependsOn: ['a'] };
+  const out = composeStepPrompt(step, { a: { id: 'a', provider: 'gemini', text: '리서치 결과' } });
+  assert.match(out, /<result from="gemini" step="a">/);
+  assert.match(out, /리서치 결과/);
+  assert.match(out, /합쳐라$/);
+  assert.equal(composeStepPrompt({ ...step, dependsOn: [] }, {}), '합쳐라');
+});
+
+await check('파이프라인 실행 — 독립 단계가 실제로 병렬로 돈다', async () => {
+  const plan = JSON.stringify({
+    steps: [
+      { id: 'a', to: 'gemini', prompt: 'r1', dependsOn: [] },
+      { id: 'b', to: 'codex', prompt: 'r2', dependsOn: [] },
+      { id: 'c', to: 'claude', prompt: 'merge', dependsOn: ['a', 'b'] },
+    ],
+  });
+  let live = 0;
+  let maxLive = 0;
+  const seen = [];
+  const call = async (id, prompt) => {
+    live++;
+    maxLive = Math.max(maxLive, live);
+    seen.push(id);
+    await new Promise((r) => setTimeout(r, 15));
+    live--;
+    if (prompt.startsWith('You are the master orchestrator of a multi-agent')) {
+      return { text: plan, usage: { input: 1, output: 1 } };
+    }
+    if (prompt.startsWith('You are the master orchestrator. Below are')) {
+      return { text: '최종 취합', usage: { input: 1, output: 1 } };
+    }
+    return { text: `${id} 산출물`, usage: { input: 1, output: 1 } };
+  };
+  const led = new Ledger();
+  const p = new Pipeline({ cwd: tmp, master: 'claude' }, led, call);
+  const events = [];
+  for (const e of ['plan:done', 'batch:start', 'step:done', 'run:done']) {
+    p.on(e, (d) => events.push([e, d]));
+  }
+  const out = await p.run('작업');
+  assert.equal(out.final, '최종 취합');
+  assert.equal(maxLive, 2, `병렬도 2 여야 함(실측 ${maxLive})`);
+  assert.equal(events.filter(([e]) => e === 'step:done').length, 3);
+  assert.equal(led.totals().calls, 5); // 계획 1 + 단계 3 + 취합 1
+});
+
+await check('단일 단계는 취합 호출을 생략한다(왕복 절약)', async () => {
+  const plan = JSON.stringify({ steps: [{ id: 'only', to: 'claude', prompt: 'x', dependsOn: [] }] });
+  const call = async (id, prompt) =>
+    prompt.startsWith('You are the master orchestrator of a multi-agent')
+      ? { text: plan, usage: {} }
+      : { text: '단일 답', usage: {} };
+  const led = new Ledger();
+  const out = await new Pipeline({ cwd: tmp, master: 'claude' }, led, call).run('간단한 질문');
+  assert.equal(out.final, '단일 답');
+  assert.equal(led.totals().calls, 2); // 계획 1 + 단계 1 (취합 없음)
+});
+
+await check('단계 실패는 파이프라인을 죽이지 않고 결과에 기록된다', async () => {
+  const plan = JSON.stringify({
+    steps: [
+      { id: 'a', to: 'gemini', prompt: 'x', dependsOn: [] },
+      { id: 'b', to: 'codex', prompt: 'y', dependsOn: [] },
+    ],
+  });
+  const call = async (id, prompt) => {
+    if (prompt.startsWith('You are the master orchestrator of a multi-agent')) {
+      return { text: plan, usage: {} };
+    }
+    if (prompt.startsWith('You are the master orchestrator. Below are')) {
+      return { text: '부분 취합', usage: {} };
+    }
+    if (id === 'codex') throw new Error('codex 다운');
+    return { text: 'ok', usage: {} };
+  };
+  const p = new Pipeline({ cwd: tmp, master: 'claude' }, new Ledger(), call);
+  const errs = [];
+  p.on('step:error', (d) => errs.push(d));
+  const out = await p.run('작업');
+  assert.equal(errs.length, 1);
+  assert.equal(errs[0].id, 'b');
+  assert.match(out.results.b.text, /실패: codex 다운/);
+  assert.equal(out.final, '부분 취합');
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

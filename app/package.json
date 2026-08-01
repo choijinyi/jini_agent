@@ -1,0 +1,9 @@
+{
+  "name": "jini-agent-app",
+  "productName": "Jini Agent",
+  "version": "0.1.0",
+  "description": "Jini Agent 데스크톱 창",
+  "main": "main.js",
+  "type": "module",
+  "private": true
+}
