@@ -8,6 +8,8 @@ const HELP = `Jini Agent — 다중 AI 코딩 에이전트 (계정 로그인 방
 사용법
   jini                      대화형 세션 (마스터=claude)
   jini "작업 지시"           1회 실행 후 종료
+  jini run "작업 지시"       마스터 위임 파이프라인 (계획→병렬 실행→취합)
+  jini ui                   창 앱 실행
   jini --to gemini "질문"    특정 프로바이더에 직접
   jini panel "질문"          3사 동시 질의 후 나란히 비교
   jini doctor               CLI 설치·인증 진단
@@ -124,6 +126,37 @@ export async function main(argv) {
 
   if (sub === 'ui' || sub === 'app') {
     return launchUi();
+  }
+
+  if (sub === 'run') {
+    const cfg2 = loadConfig(flags);
+    const ledger2 = new Ledger();
+    const task = words.slice(1).join(' ');
+    if (!task) {
+      console.error('사용법: jini run "작업 지시"');
+      process.exitCode = 1;
+      return;
+    }
+    const { Pipeline } = await import('./pipeline/engine.js');
+    const p = new Pipeline(cfg2, ledger2);
+    p.on('plan:done', (d) =>
+      console.log(
+        `\x1b[90m계획 ${d.steps.length}단계 · ${d.batches.length}배치` +
+          `${d.batches.some((b) => b.length > 1) ? ' (병렬 포함)' : ''}\x1b[0m`
+      )
+    );
+    p.on('step:start', (d) => console.log(`\x1b[90m  · ${d.to} 시작\x1b[0m`));
+    p.on('step:done', (d) => console.log(`\x1b[90m  · ${d.provider} 완료 (${(d.ms / 1000).toFixed(1)}s)\x1b[0m`));
+    p.on('step:error', (d) => console.error(`\x1b[31m  · ${d.to} 실패: ${d.error}\x1b[0m`));
+    try {
+      const out = await p.run(task);
+      console.log(`\n${out.final}`);
+    } catch (e) {
+      console.error(`\x1b[31m[실패]\x1b[0m ${e.message}`);
+      process.exitCode = 1;
+    }
+    console.error(`\x1b[90m${ledger2.format()}\x1b[0m`);
+    return;
   }
 
   const cfg = loadConfig(flags);

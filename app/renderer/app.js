@@ -6,6 +6,7 @@ const input = $('input');
 const sendBtn = $('send');
 
 let busy = false;
+let logPath = '';
 const chips = new Map();
 
 function esc(s) {
@@ -97,7 +98,7 @@ window.jini.onEvent(({ type, data }) => {
       msg('final', '최종', data.final);
       break;
     case 'run:error':
-      msg('error', '실패', data.error);
+      msg('error', '실패', `${data.error}\n\n로그: ${logPath || '(경로 미확인)'}`);
       break;
     case 'ledger':
       $('ledger').textContent = data.text;
@@ -234,6 +235,7 @@ $('doctor').addEventListener('click', async () => {
 /* ── 초기화 ──────────────────────────────────────────────── */
 (async () => {
   const info = await window.jini.init();
+  logPath = info.logPath || '';
   const box = $('providers');
   info.providers.forEach((p) => {
     const c = document.createElement('span');
@@ -244,6 +246,14 @@ $('doctor').addEventListener('click', async () => {
     chips.set(p.id, c);
   });
   await refreshFolder();
+  if (info.isHome) {
+    msg(
+      'sys',
+      '작업 폴더 확인',
+      '지금 작업 폴더가 홈 디렉터리입니다. 홈 전체를 대상으로 하면 느리고 실패하기 쉽습니다 —\n' +
+        '좌측 [폴더 열기]로 실제 작업할 프로젝트 폴더를 먼저 선택하세요.'
+    );
+  }
   const rows = await refreshDoctor();
   const missing = rows.filter((r) => !r.installed);
   const need = rows.filter((r) => r.installed && !r.auth.ok);

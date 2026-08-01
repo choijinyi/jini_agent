@@ -1,4 +1,8 @@
 node_modules/
 .jini.json
+# 개발 도구가 작업 폴더에 남기는 파일 — 앱과 무관하고 사용자 경로가 들어 있다
+CLAUDE.md
+.mcp.json*
+logs/
 *.log
 .DS_Store

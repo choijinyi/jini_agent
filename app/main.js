@@ -23,7 +23,39 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 let win = null;
 const ledger = new Ledger();
+
+/** 창은 어디서 실행되든(바로가기의 WorkingDirectory) 마지막에 고른 폴더를 기억한다. */
+const stateFile = () => path.join(app.getPath('userData'), 'state.json');
+const logFile = () => path.join(app.getPath('userData'), 'app.log');
+
+function log(...parts) {
+  const line = `[${new Date().toISOString()}] ${parts.join(' ')}\n`;
+  try {
+    fs.appendFileSync(logFile(), line);
+  } catch { /* 로그 실패가 앱을 막지 않는다 */ }
+  console.log(line.trim());
+}
+
+function loadState() {
+  try {
+    return JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveState(patch) {
+  try {
+    fs.writeFileSync(stateFile(), JSON.stringify({ ...loadState(), ...patch }, null, 2));
+  } catch (e) {
+    log('state 저장 실패:', e.message);
+  }
+}
+
 let cfg = loadConfig({ backend: 'cli' });
+
+process.on('uncaughtException', (e) => log('uncaughtException:', e.stack || e.message));
+process.on('unhandledRejection', (e) => log('unhandledRejection:', e?.stack || String(e)));
 
 function createWindow() {
   win = new BrowserWindow({
@@ -45,6 +77,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  const saved = loadState().cwd;
+  if (saved && fs.existsSync(saved)) cfg = { ...cfg, cwd: saved };
+  log('시작 · cwd =', cfg.cwd, '· 로그 =', logFile());
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -61,6 +96,9 @@ ipcMain.handle('jini:init', async () => ({
   cwd: cfg.cwd,
   master: cfg.master,
   providers: Object.values(PROVIDERS).map((p) => ({ id: p.id, role: p.role })),
+  logPath: logFile(),
+  // 홈 디렉터리를 작업 폴더로 두면 에이전트가 홈 전체를 훑다가 느려지거나 실패한다.
+  isHome: path.resolve(cfg.cwd) === path.resolve(app.getPath('home')),
 }));
 
 ipcMain.handle('jini:doctor', async () => doctor());
@@ -72,6 +110,8 @@ ipcMain.handle('jini:pickFolder', async () => {
   });
   if (r.canceled || !r.filePaths[0]) return { cwd: cfg.cwd, ...listDir(cfg.cwd) };
   cfg = { ...cfg, cwd: r.filePaths[0] };
+  saveState({ cwd: cfg.cwd });
+  log('작업 폴더 변경:', cfg.cwd);
   return { cwd: cfg.cwd, ...listDir(cfg.cwd) };
 });
 
@@ -119,11 +159,13 @@ ipcMain.handle('jini:run', async (_e, { task }) => {
   for (const ev of ['plan:start', 'plan:done', 'batch:start', 'step:start', 'step:done', 'step:error']) {
     p.on(ev, (d) => send('jini:event', { type: ev, data: d }));
   }
+  log('run 시작 · cwd =', cfg.cwd, '· task =', task.slice(0, 120));
   try {
     const out = await p.run(task);
     send('jini:event', { type: 'run:done', data: { final: out.final } });
     return { ok: true, final: out.final };
   } catch (err) {
+    log('run 실패:', err.stack || err.message);
     send('jini:event', { type: 'run:error', data: { error: err.message } });
     return { ok: false, error: err.message };
   } finally {
