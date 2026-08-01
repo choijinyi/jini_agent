@@ -47,7 +47,19 @@ Info '의존성 설치'
 Push-Location $Dir
 try { npm install --omit=dev --no-audit --no-fund | Out-Null } finally { Pop-Location }
 
-# 4. 실행 셈(shim) 생성 + PATH 등록
+# 4. 자기검증 — 통과해야 실행 셈을 만든다(검증 실패 시 깨진 설치가 실행되는 것을 막는다)
+Info '자기검증 실행'
+Push-Location $Dir
+try {
+  node src/selftest.js
+  if ($LASTEXITCODE -ne 0) {
+    Warn '자기검증 실패 — 실행 셈을 만들지 않고 중단한다.'
+    Warn "받아둔 소스는 $Dir 에 남아 있다(수동 점검용). 제거: Remove-Item -Recurse -Force '$Dir'"
+    exit 1
+  }
+} finally { Pop-Location }
+
+# 5. 실행 셈(shim) 생성 + PATH 등록
 $shimDir = Join-Path $Dir 'shim'
 New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
 $entry = Join-Path $Dir 'bin\jini.js'
@@ -63,14 +75,6 @@ if ($userPath -notlike "*$shimDir*") {
 }
 $env:Path = "$env:Path;$shimDir"
 
-# 5. 검증
-Info '자기검증 실행'
-Push-Location $Dir
-try { node src/selftest.js } finally { Pop-Location }
-
 Info "설치 완료: $Dir"
-if (-not $env:ANTHROPIC_API_KEY) {
-  Warn '다음 단계: $env:ANTHROPIC_API_KEY = "sk-ant-..." 를 설정하세요.'
-  Warn '영속 설정: [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY","sk-ant-...","User")'
-}
+Info '다음 단계: jini doctor 로 claude·gemini·codex 계정 로그인 상태를 확인하세요.'
 Info '실행: jini'

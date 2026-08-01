@@ -24,9 +24,10 @@ export const DEFAULTS = {
   master: 'claude',
   // 프로바이더별 모델 고정(null = 각 CLI 의 기본값).
   providerModels: { claude: null, gemini: null, codex: null },
-  // 주 모델(backend=api 일 때만 사용). 기계적 작업만 fastModel 로 라우팅된다(router.js).
+  // 주 모델(backend=api 일 때만 사용).
   model: 'claude-opus-5',
-  fastModel: 'claude-haiku-4-5',
+  // effort 자동 강등의 '짧은 입력' 기준(문자).
+  shortInputChars: 280,
   // effort: low | medium | high | xhigh | max — 토큰 예산의 1차 레버.
   effort: 'medium',
   maxTokens: 16000,

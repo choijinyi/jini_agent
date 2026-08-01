@@ -60,18 +60,21 @@ jini panel "이 설계의 약점은?"        # 3사 동시 질의 후 나란히 
 
 | # | 기법 | 구현 위치 | 효과 |
 |---|---|---|---|
-| 1 | 최소 시스템 프롬프트(≈450토큰), 동적 값 0 | `src/agent/system.js` | 상시 프리픽스 축소 + 캐시 무효화 방지 |
-| 2 | 프롬프트 캐싱 — system 1개 + 직전·현재 user 턴 2개 (상한 4개 준수) | `src/agent/loop.js:applyCacheBreakpoints` | 반복 프리픽스 입력가 0.1배 |
+| 1 | 최소 시스템 프롬프트(**실측 803자 · 15줄**), 동적 값 0 | `src/agent/system.js` | 상시 프리픽스 축소 + 캐시 무효화 방지 |
+| 2 | 프롬프트 캐싱 — **브레이크포인트 3개**(system 1 + 최근 user 턴 2, 상한 4 준수) | `src/agent/loop.js:applyCacheBreakpoints` | 반복 프리픽스 입력가 0.1배 |
 | 3 | 도구 스키마 지연 로딩(`defer_loading` + `tool_search`) | `src/tools/registry.js` | 안 쓰는 도구 스키마를 컨텍스트에서 제외 |
 | 4 | 서버측 컨텍스트 편집(`clear_tool_uses_20250919`) | `src/agent/loop.js:betaParams` | 오래된 도구 결과를 전송 대상에서 제거 |
 | 5 | 파일 전문 대신 줄 창(기본 200줄) + 재읽기 중복 제거 | `src/tools/exec.js:read` | 에이전트 루프 최대 중복원 제거 |
 | 6 | 도구 결과 상한(기본 8000자) 후 포인터 | `src/tools/exec.js:execTool` | 폭주하는 명령 출력 차단 |
 | 7 | diff 기반 편집(`edit`, 유일 일치 강제) | `src/tools/exec.js:edit` | 파일 재작성 출력 토큰 제거 |
-| 8 | `effort` 기본 medium + 단순 1턴 질의 자동 강등 | `src/agent/router.js` | 사고 토큰 조절 |
-| 9 | 기계적 보조 작업만 소형 모델로 라우팅 | `src/agent/router.js:pickModel` | 판단 품질은 주 모델 유지 |
-| 10 | 토큰 원장(캐시 읽기/쓰기 분리 계상) | `src/agent/ledger.js` | 절감 효과를 추정이 아니라 실측 |
+| 8 | `effort` 자동 강등 — **첫 턴 + 직전 도구 미사용 + 입력 280자 이하** 3조건 동시 충족 시에만 한 단계 | `src/agent/router.js:pickEffort` | 사고 토큰 조절 |
+| 9 | 토큰 원장(캐시 읽기/쓰기 분리 계상) | `src/agent/ledger.js` | 절감 효과를 추정이 아니라 실측 |
 
 주 모델 기본값은 `claude-opus-5`다. 비용 절감을 위해 임의로 하위 모델로 내리지 않는다 — 모델 선택은 `--model` 로 사용자가 정한다.
+
+> 이 표는 CSO 독립 검수(2026-08-01)에서 10종 중 2종이 코드와 불일치, 1종이 수치 과대로 판정돼 수정한 결과다.
+> 삭제된 항목: "기계적 보조 작업만 소형 모델로 라우팅" — `pickModel` 은 저장소 어디에서도 호출되지 않는
+> 죽은 코드였다. 문서만 맞추는 대신 함수를 제거했다.
 
 ## 설정
 
@@ -83,7 +86,7 @@ jini panel "이 설계의 약점은?"        # 3사 동시 질의 후 나란히 
   "master": "claude",
   "providerModels": { "claude": null, "gemini": null, "codex": null },
   "model": "claude-opus-5",
-  "fastModel": "claude-haiku-4-5",
+  "shortInputChars": 280,
   "effort": "medium",
   "maxTokens": 16000,
   "readWindow": 200,
@@ -117,7 +120,19 @@ npm start          # 로컬 실행
 
 ### 알려진 공백
 
-- `gemini`는 `GOOGLE_API_KEY`/`GEMINI_API_KEY`가 설정돼 있으면 **계정 로그인 대신 API 키를 우선 사용**한다.
-  계정 로그인으로 돌리려면 두 환경변수를 해제하고 `~/.gemini/settings.json` 의
-  `security.auth.selectedType` 을 `oauth-personal` 로 바꾼 뒤 `gemini` 를 한 번 실행해 로그인한다.
+- `gemini`만 계정 로그인이 아니라 **API 키 인증**으로 동작한다(`~/.gemini/settings.json` 의
+  `security.auth.selectedType = "gemini-api-key"`, 그리고 `GOOGLE_API_KEY`/`GEMINI_API_KEY` 환경변수).
   `jini doctor` 가 이 상태를 감지해 경고한다.
+
+  계정 로그인으로 바꾸려면 **사람이 한 번 대화형으로** 마쳐야 한다 — `selectedType` 을
+  `oauth-personal` 로 바꾸면 CLI 가 브라우저 인증 페이지를 열고 `[Y/n]` 동의를 요구하므로
+  헤드리스로는 완결되지 않는다(2026-08-01 실측: `FatalCancellationError: Authentication cancelled`).
+
+  ```bash
+  # 1) 대화형으로 gemini 실행 → /auth 에서 "Login with Google" 선택 → 브라우저 동의
+  gemini
+  # 2) 완료 후 환경변수 해제(키가 있으면 키가 우선한다)
+  #    PowerShell: Remove-Item Env:GOOGLE_API_KEY, Env:GEMINI_API_KEY
+  # 3) 확인
+  jini doctor
+  ```

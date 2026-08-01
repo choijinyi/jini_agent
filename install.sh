@@ -33,6 +33,16 @@ fi
 info '의존성 설치'
 (cd "$DIR" && npm install --omit=dev --no-audit --no-fund >/dev/null)
 
+# 자기검증을 먼저 통과해야 실행 셈을 만든다.
+# 이전 순서(셈 생성 → 검증)는 검증이 실패해도 셈이 남아 깨진 설치가 실행 가능했다
+# — CSO 검수 §4(중대).
+info '자기검증 실행'
+if ! (cd "$DIR" && node src/selftest.js); then
+  warn '자기검증 실패 — 실행 셈을 만들지 않고 중단한다.'
+  warn "받아둔 소스는 $DIR 에 남아 있다(수동 점검용). 제거하려면: rm -rf \"$DIR\""
+  exit 1
+fi
+
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/jini" <<EOF
 #!/usr/bin/env bash
@@ -40,13 +50,10 @@ exec node "$DIR/bin/jini.js" "\$@"
 EOF
 chmod +x "$BIN_DIR/jini"
 
-info '자기검증 실행'
-(cd "$DIR" && node src/selftest.js)
-
 info "설치 완료: $DIR"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) warn "PATH 에 $BIN_DIR 이 없습니다. 셸 설정에 추가하세요: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-[ -n "${ANTHROPIC_API_KEY:-}" ] || warn '다음 단계: export ANTHROPIC_API_KEY=sk-ant-...'
+info '다음 단계: jini doctor 로 claude·gemini·codex 계정 로그인 상태를 확인하세요.'
 info '실행: jini'

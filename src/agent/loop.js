@@ -89,7 +89,11 @@ export async function runTurn(session, userInput, approve) {
       tools: session.tools,
       messages: session.messages,
       output_config: {
-        effort: pickEffort(cfg, { turnIndex: session.turnIndex, lastUsedTools: session.lastUsedTools }),
+        effort: pickEffort(cfg, {
+          turnIndex: session.turnIndex,
+          lastUsedTools: session.lastUsedTools,
+          inputLength: userInput.length,
+        }),
       },
       ...betaParams(cfg),
     };

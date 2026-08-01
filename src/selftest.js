@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { execTool } from './tools/exec.js';
 import { buildTools, CORE_TOOLS, NEEDS_APPROVAL } from './tools/registry.js';
 import { applyCacheBreakpoints } from './agent/loop.js';
+import { pickEffort } from './agent/router.js';
 import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
 import { buildSystem } from './agent/system.js';
@@ -17,17 +18,32 @@ import { PROVIDERS, parseClaude, parseGemini, parseCodex } from './providers/ind
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
 let passed = 0;
+const fail = (name, e) => {
+  console.error(`  FAIL ${name}: ${e.message}`);
+  process.exitCode = 1;
+};
+
+/**
+ * 비동기 테스트가 실패하면 이전 구현은 unhandled rejection 으로 전체 실행이
+ * 중단되고 FAIL 줄조차 남지 않았다 — CSO 검수 §3(중대). .catch 로 흡수한다.
+ */
 const check = (name, fn) => {
+  let r;
   try {
-    const r = fn();
-    return r instanceof Promise
-      ? r.then(() => { console.log(`  ok  ${name}`); passed++; })
-      : (console.log(`  ok  ${name}`), passed++, Promise.resolve());
+    r = fn();
   } catch (e) {
-    console.error(`  FAIL ${name}: ${e.message}`);
-    process.exitCode = 1;
+    fail(name, e);
     return Promise.resolve();
   }
+  if (r instanceof Promise) {
+    return r.then(
+      () => { console.log(`  ok  ${name}`); passed++; },
+      (e) => fail(name, e)
+    );
+  }
+  console.log(`  ok  ${name}`);
+  passed++;
+  return Promise.resolve();
 };
 
 fs.mkdirSync(path.join(tmp, 'src'));
@@ -62,8 +78,17 @@ await check('glob', async () => {
   assert.match(out, /src\/a\.js/);
 });
 
-await check('경로 탈출 거부', async () => {
-  await assert.rejects(() => execTool('read', { path: '../../etc/hosts' }, cfg, {}));
+await check('경로 탈출 거부 — 가드가 거부한 것인지 메시지로 확정', async () => {
+  // 존재하지 않는 표적을 쓰면 ENOENT 로도 통과해 무의미 통과가 된다 — CSO 검수 §2(중대).
+  // 실존 파일을 표적으로 삼고, 에러 메시지가 가드의 것인지까지 확인한다.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-esc-'));
+  const victim = path.join(outside, 'real.txt');
+  fs.writeFileSync(victim, 'REAL\n');
+  const rel = path.relative(tmp, victim).split(path.sep).join('/');
+  for (const p of [rel, victim, `${victim.replace(/\\/g, '/')}`]) {
+    await assert.rejects(() => execTool('read', { path: p }, cfg, {}), /작업 루트 밖 경로 거부/);
+  }
+  fs.rmSync(outside, { recursive: true, force: true });
 });
 
 await check('도구 결과 상한', async () => {
@@ -126,6 +151,24 @@ await check('핵심 도구 스키마 무결성', () => {
     assert.ok(t.name && t.description && t.input_schema.type === 'object', t.name);
     assert.ok(t.description.length < 120, `${t.name} 설명이 깁니다(프리픽스 낭비)`);
   }
+});
+
+await check('회귀 §9: effort 강등이 입력 길이를 실제로 본다', () => {
+  const c = { ...cfg, effort: 'medium', shortInputChars: 280 };
+  const base = { turnIndex: 0, lastUsedTools: false };
+  assert.equal(pickEffort(c, { ...base, inputLength: 20 }), 'low', '짧은 입력은 강등');
+  assert.equal(pickEffort(c, { ...base, inputLength: 5000 }), 'medium', '긴 입력은 유지');
+  assert.equal(
+    pickEffort(c, { turnIndex: 3, lastUsedTools: false, inputLength: 20 }),
+    'medium',
+    '첫 턴이 아니면 유지'
+  );
+  assert.equal(
+    pickEffort(c, { turnIndex: 0, lastUsedTools: true, inputLength: 20 }),
+    'medium',
+    '직전 도구 사용이면 유지'
+  );
+  assert.equal(pickEffort({ ...c, autoEffort: false }, { ...base, inputLength: 20 }), 'medium');
 });
 
 // ── 회귀: reviewer-gemini 가 확증한 결함 2종 (2026-08-01) ────────
