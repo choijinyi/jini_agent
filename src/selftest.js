@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { execTool } from './tools/exec.js';
-import { buildTools, CORE_TOOLS } from './tools/registry.js';
+import { buildTools, CORE_TOOLS, NEEDS_APPROVAL } from './tools/registry.js';
 import { applyCacheBreakpoints } from './agent/loop.js';
 import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
@@ -126,6 +126,46 @@ await check('핵심 도구 스키마 무결성', () => {
     assert.ok(t.name && t.description && t.input_schema.type === 'object', t.name);
     assert.ok(t.description.length < 120, `${t.name} 설명이 깁니다(프리픽스 낭비)`);
   }
+});
+
+// ── 회귀: reviewer-gemini 가 확증한 결함 2종 (2026-08-01) ────────
+
+await check('회귀 ②-2: git 도구 셸 메타문자 주입 차단', async () => {
+  await assert.rejects(
+    () => execTool('git', { args: 'status && echo INJECTED_MARKER' }, cfg, {}),
+    /허용되지 않는 문자/
+  );
+  // 'log;' 는 하위명령 검사에서, '&&' 는 문자 화이트리스트에서 걸린다 — 어느 쪽이든 차단.
+  await assert.rejects(
+    () => execTool('git', { args: 'log; rm -rf /' }, cfg, {}),
+    /허용되지 않는 문자|읽기 전용/
+  );
+  await assert.rejects(() => execTool('git', { args: 'push origin main' }, cfg, {}), /읽기 전용/);
+});
+
+await check('회귀 ②-1: 심링크·정션을 통한 루트 탈출 차단', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-out-'));
+  fs.writeFileSync(path.join(outside, 'secret.txt'), 'TOP_SECRET\n');
+  let made = false;
+  try {
+    fs.symlinkSync(outside, path.join(tmp, 'link'), 'junction');
+    made = true;
+  } catch {
+    /* 권한 없으면 이 검증은 건너뛴다 */
+  }
+  if (made) {
+    await assert.rejects(
+      () => execTool('read', { path: 'link/secret.txt' }, cfg, {}),
+      /작업 루트 밖/
+    );
+    fs.rmSync(path.join(tmp, 'link'), { recursive: true, force: true });
+  }
+  fs.rmSync(outside, { recursive: true, force: true });
+});
+
+await check('회귀 ②-3: git 이 승인 게이트에 포함됨', () => {
+  assert.ok(NEEDS_APPROVAL.has('git'));
+  for (const t of ['write', 'edit', 'bash']) assert.ok(NEEDS_APPROVAL.has(t), t);
 });
 
 // ── 프로바이더 계층(계정 로그인 CLI) ─────────────────────────────

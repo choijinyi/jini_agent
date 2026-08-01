@@ -76,8 +76,10 @@ export async function runTurn(session, userInput, approve) {
   session.messages.push({ role: 'user', content: [{ type: 'text', text }] });
 
   let usedTools = false;
+  const maxHops = cfg.maxHops || 25;
+  let hop = 0;
 
-  for (let hop = 0; hop < (cfg.maxHops || 25); hop++) {
+  for (; hop < maxHops; hop++) {
     applyCacheBreakpoints(session.messages);
 
     const params = {
@@ -108,6 +110,12 @@ export async function runTurn(session, userInput, approve) {
     if (msg.stop_reason !== 'tool_use') break;
 
     const calls = msg.content.filter((b) => b.type === 'tool_use');
+    if (calls.length === 0) {
+      // stop_reason 이 tool_use 인데 블록이 없으면 빈 user 메시지를 만들지 않고 종료한다
+      // (빈 content 는 400) — reviewer-gemini 지적 ①-4.
+      console.log('\x1b[33m[jini] tool_use 로 멈췄으나 도구 호출 블록이 없습니다 — 턴 종료.\x1b[0m');
+      break;
+    }
     const results = [];
     for (const call of calls) {
       usedTools = true;
@@ -127,6 +135,14 @@ export async function runTurn(session, userInput, approve) {
       results.push({ type: 'tool_result', tool_use_id: call.id, content: out, is_error: isError });
     }
     session.messages.push({ role: 'user', content: results });
+  }
+
+  if (hop >= maxHops) {
+    // 무음 종료 금지 — 상한 도달을 사용자에게 알린다(reviewer-gemini 지적 ④-1).
+    console.log(
+      `\x1b[33m[jini] 도구 호출 상한 ${maxHops}회 도달 — 턴을 종료합니다. ` +
+        `이어서 진행하려면 다시 지시하세요(설정: maxHops).\x1b[0m`
+    );
   }
 
   session.turnIndex++;

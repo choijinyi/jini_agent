@@ -3,16 +3,36 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
-/** 작업 루트 밖으로 나가는 경로를 거부한다(경로 탈출 방지). */
+/**
+ * 심링크·정션까지 해소한 실제 경로를 기준으로 루트 포함 여부를 판정한다.
+ * 문자열 정규화(path.resolve)만으로는 루트 안의 링크가 밖을 가리킬 때 통과된다
+ * — reviewer-gemini 지적 ②-1, 2026-08-01 정션으로 재현 확인된 실결함.
+ */
+function realpathBestEffort(abs) {
+  const missing = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(cur), ...missing.reverse());
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return abs; // 루트까지 못 찾음 — 원본 사용
+      missing.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/** 작업 루트 밖으로 나가는 경로를 거부한다(경로 탈출·심링크 탈출 방지). */
 function resolveIn(cfg, p) {
   if (!p) throw new Error('path 가 비어 있습니다');
-  const root = path.resolve(cfg.cwd);
-  const abs = path.resolve(root, p);
-  const rel = path.relative(root, abs);
+  const root = realpathBestEffort(path.resolve(cfg.cwd));
+  const real = realpathBestEffort(path.resolve(root, p));
+  const rel = path.relative(root, real);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error(`작업 루트 밖 경로 거부: ${p}`);
   }
-  return abs;
+  return real;
 }
 
 function sha(s) {
@@ -130,11 +150,23 @@ const TOOLS = {
     return run(command, cfg.cwd, timeout);
   },
 
+  /**
+   * 읽기 전용 git. 셸을 거치지 않고 argv 배열로 실행한다.
+   * 이전 구현은 `git ${args}` 를 shell:true 로 넘겨 'log; rm -rf /' 류의
+   * 셸 메타문자 주입이 통했다 — reviewer-gemini 지적 ②-2, 재현 확인된 실결함.
+   */
   async git(cfg, { args }) {
     const allowed = ['status', 'log', 'diff', 'show', 'blame', 'branch'];
-    const sub = String(args).trim().split(/\s+/)[0];
-    if (!allowed.includes(sub)) throw new Error(`읽기 전용 git 하위명령만 허용: ${allowed.join(', ')}`);
-    return run(`git ${args}`, cfg.cwd, 30000);
+    const argv = String(args).trim().split(/\s+/).filter(Boolean);
+    if (!allowed.includes(argv[0])) {
+      throw new Error(`읽기 전용 git 하위명령만 허용: ${allowed.join(', ')}`);
+    }
+    for (const a of argv) {
+      if (!/^[A-Za-z0-9._\/=:@^~-]+$/.test(a)) {
+        throw new Error(`git 인자에 허용되지 않는 문자: ${a}`);
+      }
+    }
+    return runArgv('git', argv, cfg.cwd, 30000);
   },
 
   async count_tokens(cfg, { path: p, text }, ctx) {
@@ -147,9 +179,18 @@ const TOOLS = {
   },
 };
 
+/** 셸을 거치지 않는 실행 — 인자가 셸 메타문자로 해석될 여지를 없앤다. */
+function runArgv(bin, argv, cwd, timeout) {
+  return collect(spawn(bin, argv, { cwd, shell: false }), timeout);
+}
+
+/** 셸 경유 실행 — bash 도구 전용(승인 게이트로 보호된다). */
 function run(command, cwd, timeout) {
+  return collect(spawn(command, { cwd, shell: true }), timeout);
+}
+
+function collect(child, timeout) {
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true });
     let out = '';
     const cap = 200_000;
     const push = (d) => {

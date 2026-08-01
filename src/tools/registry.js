@@ -129,5 +129,9 @@ export function buildTools(cfg) {
   ];
 }
 
-/** 승인이 필요한 도구(쓰기·실행). */
-export const NEEDS_APPROVAL = new Set(['write', 'edit', 'bash']);
+/**
+ * 승인이 필요한 도구(쓰기·실행).
+ * git 은 읽기 전용 하위명령만 허용하지만 외부 프로세스를 띄우므로 게이트에 포함한다
+ * — reviewer-gemini 지적 ②-3.
+ */
+export const NEEDS_APPROVAL = new Set(['write', 'edit', 'bash', 'git']);
