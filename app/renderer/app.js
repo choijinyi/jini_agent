@@ -334,16 +334,22 @@ function renderSettings(res) {
   $('settingsPath').textContent = `저장 위치: ${res.path}`;
 }
 
-$('settings').addEventListener('click', async () => {
+async function openSettings() {
   renderSettings(await window.jini.settings('list'));
   $('modal').classList.remove('hidden');
-});
+}
+
+$('settings').addEventListener('click', openSettings);
 $('modalClose').addEventListener('click', () => $('modal').classList.add('hidden'));
 $('modal').addEventListener('click', (e) => {
   if (e.target.id === 'modal') $('modal').classList.add('hidden');
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('modal').classList.add('hidden');
+  if (e.ctrlKey && e.key === ',') {
+    e.preventDefault();
+    openSettings();
+  }
 });
 
 /* ── 초기화 ──────────────────────────────────────────────── */

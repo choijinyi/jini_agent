@@ -57,6 +57,19 @@ body {
 }
 .ghost:hover { color: var(--fg); border-color: var(--accent); }
 
+.topbtn {
+  background: var(--accent);
+  color: #06101f;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.topbtn:hover { filter: brightness(1.1); }
+
 .providers { display: flex; gap: 6px; }
 .chip {
   font-size: 11px;

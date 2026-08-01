@@ -13,6 +13,7 @@ const HELP = `Jini Agent — 다중 AI 코딩 에이전트 (계정 로그인 방
   jini --to gemini "질문"    특정 프로바이더에 직접
   jini panel "질문"          3사 동시 질의 후 나란히 비교
   jini doctor               CLI 설치·인증 진단
+  jini update               최신 버전으로 갱신
 
 프로바이더 (인증 = 각 CLI 의 계정 로그인 · API 키 불요)
   claude   오케스트레이션·코딩·심층추론 (마스터)
@@ -55,6 +56,25 @@ function parseArgs(argv) {
     else rest.push(a);
   }
   return { flags, prompt: rest.join(' ').trim() };
+}
+
+/** 설치본을 최신으로 올린다(설치 스크립트를 그대로 재사용 — 검증된 경로 하나만 유지). */
+async function runUpdate() {
+  const { spawn } = await import('node:child_process');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const script = path.join(root, process.platform === 'win32' ? 'install.ps1' : 'install.sh');
+
+  const [cmd, args] =
+    process.platform === 'win32'
+      ? ['powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]]
+      : ['bash', [script]];
+
+  console.log(`갱신 중: ${root}`);
+  const child = spawn(cmd, args, { stdio: 'inherit' });
+  const code = await new Promise((res) => child.on('close', res));
+  if (code !== 0) process.exitCode = code;
 }
 
 /**
@@ -203,6 +223,10 @@ export async function main(argv) {
 
   if (sub === 'config') {
     return runConfig(words.slice(1));
+  }
+
+  if (sub === 'update') {
+    return runUpdate();
   }
 
   if (sub === 'run') {
