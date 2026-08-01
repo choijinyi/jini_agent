@@ -4,7 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 import { Ledger } from '../src/agent/ledger.js';
 import { Pipeline } from '../src/pipeline/engine.js';
-import { doctor, runProvider, PROVIDERS, openLoginTerminal } from '../src/providers/index.js';
+import {
+  doctor,
+  runProvider,
+  PROVIDERS,
+  openLoginTerminal,
+  openInstallTerminal,
+} from '../src/providers/index.js';
 import fs from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +95,14 @@ ipcMain.handle('jini:listDir', async () => ({ cwd: cfg.cwd, ...listDir(cfg.cwd) 
 ipcMain.handle('jini:login', async (_e, { id }) => {
   try {
     return { ok: true, ...openLoginTerminal(id) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('jini:install', async (_e, { id }) => {
+  try {
+    return { ok: true, ...openInstallTerminal(id) };
   } catch (e) {
     return { ok: false, error: e.message };
   }

@@ -300,19 +300,48 @@ export async function doctor(opts = {}) {
   return rows;
 }
 
-/** 로그인용 터미널 창을 띄운다(대화형 인증은 사람이 마쳐야 한다). */
-export function openLoginTerminal(id) {
-  const spec = LOGIN[id];
-  if (!spec) throw new Error(`알 수 없는 프로바이더: ${id}`);
+/** 각 CLI 의 설치 패키지(2026-08-01 실측 — 전역 npm 목록에서 확인). */
+export const INSTALL = {
+  claude: { pkg: '@anthropic-ai/claude-code' },
+  gemini: { pkg: '@google/gemini-cli' },
+  codex: { pkg: '@openai/codex' },
+};
+
+export const installCommand = (id) => `npm install -g ${INSTALL[id].pkg}`;
+
+/** 터미널 창을 띄워 명령을 실행한다(진행 상황을 사용자가 직접 본다). */
+function openTerminal(command) {
   if (process.platform === 'win32') {
-    spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', spec.command], {
+    spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', command], {
       detached: true,
       stdio: 'ignore',
     }).unref();
   } else if (process.platform === 'darwin') {
-    spawn('open', ['-a', 'Terminal'], { detached: true, stdio: 'ignore' }).unref();
+    spawn('osascript', ['-e', `tell app "Terminal" to do script "${command}"`], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
   } else {
-    spawn('x-terminal-emulator', ['-e', spec.command], { detached: true, stdio: 'ignore' }).unref();
+    spawn('x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' }).unref();
   }
+  return command;
+}
+
+/** 로그인용 터미널 창을 띄운다(대화형 인증은 사람이 마쳐야 한다). */
+export function openLoginTerminal(id) {
+  const spec = LOGIN[id];
+  if (!spec) throw new Error(`알 수 없는 프로바이더: ${id}`);
+  openTerminal(spec.command);
   return { command: spec.command, guide: spec.guide };
+}
+
+/** CLI 설치용 터미널 창을 띄운다. */
+export function openInstallTerminal(id) {
+  if (!INSTALL[id]) throw new Error(`알 수 없는 프로바이더: ${id}`);
+  const command = installCommand(id);
+  openTerminal(command);
+  return {
+    command,
+    guide: '설치가 끝나면 창을 닫고 상단 [진단]을 누르세요. 이후 로그인이 필요합니다.',
+  };
 }

@@ -14,7 +14,8 @@
 param(
   [string]$Repo = $(if ($env:JINI_REPO) { $env:JINI_REPO } else { 'https://github.com/choijinyi/jini_agent.git' }),
   [string]$Ref = 'main',
-  [string]$Dir = (Join-Path $env:LOCALAPPDATA 'jini-agent')
+  [string]$Dir = (Join-Path $env:LOCALAPPDATA 'jini-agent'),
+  [switch]$SkipCliInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +41,30 @@ if (Test-Path (Join-Path $Dir '.git')) {
   Info "클론: $Repo -> $Dir"
   if (Test-Path $Dir) { Remove-Item $Dir -Recurse -Force }
   git clone --depth 1 --branch $Ref $Repo $Dir
+}
+
+# 2-1. 프로바이더 CLI 자동 설치 — 없는 것만 설치한다(이미 있으면 건드리지 않는다)
+if (-not $SkipCliInstall) {
+  $clis = @(
+    @{ id = 'claude'; bin = 'claude'; pkg = '@anthropic-ai/claude-code' },
+    @{ id = 'gemini'; bin = 'gemini'; pkg = '@google/gemini-cli' },
+    @{ id = 'codex'; bin = 'codex'; pkg = '@openai/codex' }
+  )
+  foreach ($c in $clis) {
+    if (Get-Command $c.bin -ErrorAction SilentlyContinue) {
+      Info "$($c.id) 이미 설치됨"
+      continue
+    }
+    Info "$($c.id) 설치 중 — npm install -g $($c.pkg)"
+    npm install -g $c.pkg --no-audit --no-fund | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Warn "$($c.id) 설치 실패 — 나중에 직접 실행: npm install -g $($c.pkg)"
+    } else {
+      Info "$($c.id) 설치 완료"
+    }
+  }
+} else {
+  Info 'CLI 자동 설치 건너뜀(-SkipCliInstall)'
 }
 
 # 3. 의존성
@@ -92,6 +117,19 @@ if (Test-Path $electron) {
     $lnk.Arguments = "`"$(Join-Path $Dir 'app')`""
     $lnk.WorkingDirectory = $env:USERPROFILE
     $lnk.Description = 'Jini Agent - 다중 AI 코딩 에이전트'
+
+    # 아이콘: 저장소의 assets/jini.ico. 없고 바탕화면에 jini.png 가 있으면 즉석 변환한다.
+    $ico = Join-Path $Dir 'assets\jini.ico'
+    if (-not (Test-Path $ico)) {
+      $png = Join-Path ([Environment]::GetFolderPath('Desktop')) 'jini.png'
+      $maker = Join-Path $Dir 'tools\make-icon.ps1'
+      if ((Test-Path $png) -and (Test-Path $maker)) {
+        Push-Location $Dir
+        try { & powershell -NoProfile -ExecutionPolicy Bypass -File $maker -Png $png -Ico 'assets\jini.ico' | Out-Null } finally { Pop-Location }
+      }
+    }
+    if (Test-Path $ico) { $lnk.IconLocation = "$ico,0" }
+
     $lnk.Save()
     Info '바탕화면 바로가기 생성: Jini Agent'
   } catch {

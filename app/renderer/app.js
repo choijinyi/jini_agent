@@ -188,17 +188,21 @@ function renderAccounts(rows) {
     el.className = `acct ${state}`;
     const how = !r.installed ? '미설치' : r.auth.detail;
     el.innerHTML = `<i></i><span class="name">${esc(r.id)}</span><span class="how">${esc(how)}</span>`;
-    if (r.installed && state !== 'ok') {
+    // 미설치면 [설치], 설치됐는데 로그인이 없거나 키 방식이면 [로그인]
+    const action = !r.installed
+      ? { label: '설치', run: () => window.jini.install(r.id) }
+      : state !== 'ok'
+        ? { label: '로그인', run: () => window.jini.login(r.id) }
+        : null;
+    if (action) {
       const b = document.createElement('button');
-      b.textContent = '로그인';
+      b.textContent = action.label;
       b.onclick = async () => {
-        const res = await window.jini.login(r.id);
+        const res = await action.run();
         msg(
           'sys',
-          `${r.id} 로그인`,
-          res.ok
-            ? `터미널을 열었습니다: ${res.command}\n${res.guide}\n로그인을 마친 뒤 상단 [진단]을 누르세요.`
-            : `실패: ${res.error}`
+          `${r.id} ${action.label}`,
+          res.ok ? `터미널을 열었습니다: ${res.command}\n${res.guide}` : `실패: ${res.error}`
         );
       };
       el.appendChild(b);
@@ -241,12 +245,16 @@ $('doctor').addEventListener('click', async () => {
   });
   await refreshFolder();
   const rows = await refreshDoctor();
+  const missing = rows.filter((r) => !r.installed);
   const need = rows.filter((r) => r.installed && !r.auth.ok);
+  if (missing.length) {
+    msg('sys', '설치 필요', `${missing.map((r) => r.id).join(', ')} — 좌측 [계정]에서 [설치]를 누르세요.`);
+  }
   if (need.length) {
     msg(
       'sys',
       '로그인 필요',
-      `${need.map((r) => r.id).join(', ')} — 좌측 [계정]에서 로그인 버튼을 누르세요. 각자 본인 계정으로 로그인합니다.`
+      `${need.map((r) => r.id).join(', ')} — 좌측 [계정]에서 [로그인]을 누르세요. 각자 본인 계정으로 로그인합니다.`
     );
   }
   $('ledger').textContent = (await window.jini.ledger()).text;

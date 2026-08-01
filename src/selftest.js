@@ -13,7 +13,16 @@ import { pickEffort } from './agent/router.js';
 import { Ledger } from './agent/ledger.js';
 import { DEFAULTS } from './config.js';
 import { buildSystem } from './agent/system.js';
-import { PROVIDERS, parseClaude, parseGemini, parseCodex, checkAuth, LOGIN } from './providers/index.js';
+import {
+  PROVIDERS,
+  parseClaude,
+  parseGemini,
+  parseCodex,
+  checkAuth,
+  LOGIN,
+  INSTALL,
+  installCommand,
+} from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
@@ -350,6 +359,13 @@ await check('로그인 판정 — gemini 는 설정이 키 방식이면 계정 �
   const acct = checkAuth('gemini', { home, env: { GEMINI_API_KEY: 'x' } });
   assert.equal(acct.method, 'account', 'oauth 선택 시 계정 우선');
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('설치 명령이 프로바이더마다 정의돼 있다', () => {
+  assert.equal(installCommand('claude'), 'npm install -g @anthropic-ai/claude-code');
+  assert.equal(installCommand('gemini'), 'npm install -g @google/gemini-cli');
+  assert.equal(installCommand('codex'), 'npm install -g @openai/codex');
+  for (const id of Object.keys(PROVIDERS)) assert.ok(INSTALL[id]?.pkg, id);
 });
 
 await check('로그인 안내 명령이 프로바이더마다 정의돼 있다', () => {
