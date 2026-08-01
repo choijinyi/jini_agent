@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Jini Agent 설치 (Windows)
 
@@ -45,7 +45,20 @@ if (Test-Path (Join-Path $Dir '.git')) {
 # 3. 의존성
 Info '의존성 설치'
 Push-Location $Dir
-try { npm install --omit=dev --no-audit --no-fund | Out-Null } finally { Pop-Location }
+try {
+  npm install --omit=dev --no-audit --no-fund | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "npm install 실패 (exit $LASTEXITCODE)" }
+
+  # Electron 바이너리는 postinstall 로 받는데 환경에 따라 이 단계가 조용히 건너뛰어진다
+  # (2026-08-01 실측: 패키지는 있고 dist/electron.exe 만 없음). 직접 확인·복구한다.
+  $exe = Join-Path $Dir 'node_modules\electron\dist\electron.exe'
+  $inst = Join-Path $Dir 'node_modules\electron\install.js'
+  if ((Test-Path $inst) -and -not (Test-Path $exe)) {
+    Info 'Electron 바이너리 내려받는 중 (최초 1회)'
+    node $inst
+    if (-not (Test-Path $exe)) { Warn 'Electron 바이너리 확보 실패 — 창 앱 없이 CLI 만 설치됩니다.' }
+  }
+} finally { Pop-Location }
 
 # 4. 자기검증 — 통과해야 실행 셈을 만든다(검증 실패 시 깨진 설치가 실행되는 것을 막는다)
 Info '자기검증 실행'
