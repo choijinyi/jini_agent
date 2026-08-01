@@ -44,6 +44,11 @@ export const SCHEMA = {
     label: '접속 토큰 (비우면 켤 때 자동 생성)',
     scope: 'both',
   },
+  claudeConfigDir: {
+    type: 'string',
+    label: 'claude 설정 폴더 고정(빈값=기본 프로필 — 폰 앱 연동은 이 값이어야 함)',
+    scope: 'cli',
+  },
   'providerModels.claude': { type: 'string', label: 'claude 모델 고정(빈값=CLI 기본)', scope: 'cli' },
   'providerModels.gemini': { type: 'string', label: 'gemini 모델 고정(빈값=CLI 기본)', scope: 'cli' },
   'providerModels.codex': { type: 'string', label: 'codex 모델 고정(빈값=CLI 기본)', scope: 'cli' },

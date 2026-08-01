@@ -159,6 +159,23 @@ function quoteWin(a) {
  * CLI 를 1회 실행한다. 프롬프트는 stdin 으로만 전달된다.
  * Windows 의 npm 셸(.cmd)은 shell:false 로 실행할 수 없어 cmd.exe 를 경유한다.
  */
+/**
+ * claude 자식 프로세스용 환경.
+ *
+ * 상속된 CLAUDE_CONFIG_DIR 을 제거해 **사용자의 기본 프로필**(~/.claude)로 고정한다.
+ * 이게 폰 클로드 앱의 기기 연결·원격 제어가 걸려 있는 프로필이다. Jini 를 다른 프로필이
+ * 설정된 터미널(예: 격리 프로필을 쓰는 도구)에서 띄우면, 그 값이 상속돼 세션이 다른
+ * 계정 프로필로 만들어지고 폰 앱에서 영영 보이지 않는다 — 2026-08-01 실측으로 확인.
+ *
+ * cfg.claudeConfigDir 을 지정하면 그 값을 그대로 쓴다(의도적 격리용 탈출구).
+ */
+export function claudeEnv(configDir) {
+  const env = { ...process.env };
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;
+  else delete env.CLAUDE_CONFIG_DIR;
+  return env;
+}
+
 export function spawnCli(bin, args, { cwd, env, input, timeout = 600_000 } = {}) {
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32';
@@ -201,11 +218,12 @@ export function spawnCli(bin, args, { cwd, env, input, timeout = 600_000 } = {})
  * 프로바이더 1회 호출.
  * @returns {{text:string, usage:object, session:?string, model:?string, provider:string}}
  */
-export async function runProvider(id, prompt, { cwd, model, session, timeout } = {}) {
+export async function runProvider(id, prompt, { cwd, model, session, timeout, claudeConfigDir } = {}) {
   const spec = PROVIDERS[id];
   if (!spec) throw new Error(`알 수 없는 프로바이더: ${id} (${Object.keys(PROVIDERS).join(', ')})`);
   const args = spec.buildArgs({ model, session });
-  const r = await spawnCli(spec.bin, args, { cwd, input: prompt, timeout });
+  const env = id === 'claude' ? claudeEnv(claudeConfigDir) : undefined;
+  const r = await spawnCli(spec.bin, args, { cwd, input: prompt, timeout, env });
   if (r.code !== 0 && !r.stdout.includes('{')) {
     throw new Error(`${id} 실행 실패(exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 400)}`);
   }
@@ -275,6 +293,21 @@ export function checkAuth(id, { home = os.homedir(), env = process.env } = {}) {
  * 설치·로그인 진단. 설치 여부(installed)와 로그인 여부(auth)를 분리해 보고한다 —
  * "설치는 됐는데 로그인이 안 된" 상태를 사용자에게 정확히 알려주기 위해서다.
  */
+/**
+ * claude 프로필과 원격 제어(폰 앱 연동) 상태를 본다.
+ * 프로필이 기본이 아니면 폰 앱에 세션이 보이지 않는다.
+ */
+export function claudeProfileInfo({ home = os.homedir(), env = process.env } = {}) {
+  const inherited = env.CLAUDE_CONFIG_DIR || null;
+  const dir = path.join(home, '.claude');
+  let remoteControl = false;
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'));
+    remoteControl = s?.remoteControlAtStartup === true;
+  } catch { /* 설정 없음 = 꺼짐 */ }
+  return { dir, inherited, remoteControl };
+}
+
 export async function doctor(opts = {}) {
   const rows = [];
   for (const spec of Object.values(PROVIDERS)) {
@@ -285,6 +318,14 @@ export async function doctor(opts = {}) {
     if (!installed) note.push((r.stderr || r.stdout).split('\n')[0]?.slice(0, 120) || '실행 실패');
     else if (!auth.ok) note.push('로그인 필요');
     else if (auth.method === 'api-key') note.push(`${auth.detail} — 계정 로그인 아님`);
+
+    if (spec.id === 'claude' && installed) {
+      const p = claudeProfileInfo(opts);
+      if (p.inherited) note.push(`상속된 CLAUDE_CONFIG_DIR=${p.inherited} — Jini 는 무시하고 기본 프로필을 씁니다`);
+      if (!p.remoteControl) {
+        note.push('원격 제어 꺼짐(~/.claude/settings.json remoteControlAtStartup) — @bg 세션은 켠 채로 띄웁니다');
+      }
+    }
 
     rows.push({
       id: spec.id,
@@ -319,11 +360,13 @@ export function parseBackgroundId(stdout) {
  * 다만 결과는 Jini 로 돌아오지 않는다 — `claude logs` 가 터미널 제어문자를 그대로 돌려줘
  * 구조적 회수가 불가능하기 때문이다(2026-08-01 실측). 그래서 파이프라인과 분리해 둔다.
  */
-export async function startBackgroundClaude(task, { cwd, timeout = 120_000 } = {}) {
+export async function startBackgroundClaude(task, { cwd, timeout = 120_000, claudeConfigDir } = {}) {
   // 프롬프트가 argv 로 들어가므로 줄바꿈은 공백으로 접는다(Windows argv 안전).
   const oneLine = String(task).replace(/\s*\r?\n\s*/g, ' ').trim();
   if (!oneLine) throw new Error('작업 내용이 비었습니다');
-  const r = await spawnCli('claude', ['--bg', oneLine], { cwd, timeout });
+  // 세션마다 원격 제어를 켠다 — 사용자 설정에 없어도 폰 앱에서 보이도록 강제한다.
+  const args = ['--bg', '--settings', '{"remoteControlAtStartup":true}', oneLine];
+  const r = await spawnCli('claude', args, { cwd, timeout, env: claudeEnv(claudeConfigDir) });
   const out = `${r.stdout}\n${r.stderr}`;
   const id = parseBackgroundId(out);
   return {
@@ -335,8 +378,8 @@ export async function startBackgroundClaude(task, { cwd, timeout = 120_000 } = {
 }
 
 /** 실행 중인 백그라운드 에이전트 목록(클로드 앱에 보이는 것과 같은 목록). */
-export async function listBackgroundAgents({ timeout = 60_000 } = {}) {
-  const r = await spawnCli('claude', ['agents', '--json'], { timeout });
+export async function listBackgroundAgents({ timeout = 60_000, claudeConfigDir } = {}) {
+  const r = await spawnCli('claude', ['agents', '--json'], { timeout, env: claudeEnv(claudeConfigDir) });
   try {
     const all = JSON.parse(r.stdout.slice(r.stdout.indexOf('[')));
     return all

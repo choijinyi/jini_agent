@@ -23,6 +23,8 @@ import {
   INSTALL,
   installCommand,
   parseBackgroundId,
+  claudeEnv,
+  claudeProfileInfo,
 } from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
@@ -361,6 +363,37 @@ await check('로그인 판정 — gemini 는 설정이 키 방식이면 계정 �
   );
   const acct = checkAuth('gemini', { home, env: { GEMINI_API_KEY: 'x' } });
   assert.equal(acct.method, 'account', 'oauth 선택 시 계정 우선');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('claude 자식 환경은 상속된 CLAUDE_CONFIG_DIR 을 제거한다(폰 앱 연동 프로필 고정)', () => {
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = 'C:/some/isolated/profile';
+  try {
+    assert.equal(claudeEnv().CLAUDE_CONFIG_DIR, undefined, '상속값이 남아 있으면 안 됨');
+    assert.equal(claudeEnv('C:/override').CLAUDE_CONFIG_DIR, 'C:/override', '명시 지정은 존중');
+    assert.ok(claudeEnv().PATH !== undefined, '나머지 환경은 유지');
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = before;
+  }
+});
+
+await check('claude 프로필 진단 — 원격 제어 켜짐 여부를 읽는다', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-prof-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude/settings.json'), JSON.stringify({ remoteControlAtStartup: true }));
+  const on = claudeProfileInfo({ home, env: {} });
+  assert.equal(on.remoteControl, true);
+  assert.equal(on.inherited, null);
+
+  fs.writeFileSync(path.join(home, '.claude/settings.json'), JSON.stringify({}));
+  assert.equal(claudeProfileInfo({ home, env: {} }).remoteControl, false);
+  assert.equal(
+    claudeProfileInfo({ home, env: { CLAUDE_CONFIG_DIR: 'X' } }).inherited,
+    'X',
+    '상속값을 보고해야 함'
+  );
   fs.rmSync(home, { recursive: true, force: true });
 });
 

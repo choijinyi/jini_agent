@@ -236,7 +236,10 @@ ipcMain.handle('jini:login', async (_e, { id }) => {
 ipcMain.handle('jini:bg', async (_e, { task }) => {
   const { startBackgroundClaude } = await import('../src/providers/index.js');
   try {
-    const a = await startBackgroundClaude(task, { cwd: cfg.cwd });
+    const a = await startBackgroundClaude(task, {
+      cwd: cfg.cwd,
+      claudeConfigDir: cfg.claudeConfigDir || undefined,
+    });
     log('백그라운드 에이전트 시작:', a.id);
     return { ok: true, ...a };
   } catch (e) {

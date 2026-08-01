@@ -140,6 +140,7 @@ export class Pipeline extends EventEmitter {
           cwd: cfg.cwd,
           model: cfg.providerModels?.[id] || undefined,
           session: meta?.session,
+          claudeConfigDir: cfg.claudeConfigDir || undefined,
         }));
   }
 
