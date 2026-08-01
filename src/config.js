@@ -30,6 +30,8 @@ export const DEFAULTS = {
   shortInputChars: 280,
   // 한 턴에서 허용하는 최대 도구 호출 왕복.
   maxHops: 25,
+  // 리모트 컨트롤 — 기본은 꺼짐, 켜도 localhost 로만 열린다.
+  remote: { enabled: false, bind: 'localhost', port: 8765, token: '' },
   // effort: low | medium | high | xhigh | max — 토큰 예산의 1차 레버.
   effort: 'medium',
   maxTokens: 16000,

@@ -25,6 +25,7 @@ import {
 } from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
+import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -411,6 +412,71 @@ await check('설정 목록 — 기본값 여부와 스코프가 함께 나온다
   assert.equal(typeof master.isDefault, 'boolean');
   assert.ok(rows.some((r) => r.key === 'providerModels.claude'), '점 표기 키 누락');
   assert.ok(rows.length >= 10);
+});
+
+// ── 리모트 컨트롤 (실제 서버를 띄워 인증을 검증) ─────────────────
+
+await check('리모트: 토큰 없이는 서버가 아예 뜨지 않는다', () => {
+  assert.throws(() => createRemoteServer({ token: '', runTask: async () => {} }), /토큰이 없습니다/);
+});
+
+await check('리모트: 상수시간 토큰 비교', () => {
+  assert.equal(tokenEquals('abc', 'abc'), true);
+  assert.equal(tokenEquals('abc', 'abd'), false);
+  assert.equal(tokenEquals('abc', 'abcd'), false);
+  assert.equal(tokenEquals('', ''), true);
+  assert.equal(tokenEquals(null, 'x'), false);
+  assert.equal(genToken().length, 32);
+});
+
+await check('리모트: 틀린 토큰은 401, 맞으면 200 · 작업이 실행된다', async () => {
+  const token = genToken();
+  const port = 8900 + Math.floor(Math.random() * 90);
+  let ran = null;
+  const srv = createRemoteServer({
+    token,
+    port,
+    bind: 'localhost',
+    runTask: async (task, emit) => {
+      ran = task;
+      emit('run:done', { final: '완료' });
+    },
+  });
+  await srv.start();
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    assert.equal((await fetch(`${base}/`)).status, 401, '토큰 없음은 401');
+    assert.equal((await fetch(`${base}/?t=wrong`)).status, 401, '틀린 토큰은 401');
+
+    const page = await fetch(`${base}/?t=${token}`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Jini/);
+
+    const run = await fetch(`${base}/run?t=${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ task: '원격 작업' }),
+    });
+    assert.equal(run.status, 202);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(ran, '원격 작업', '작업이 실행되지 않음');
+
+    const empty = await fetch(`${base}/run?t=${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ task: '  ' }),
+    });
+    assert.equal(empty.status, 400, '빈 작업은 400');
+  } finally {
+    await srv.stop();
+  }
+});
+
+await check('리모트: 접속 주소는 bind 에 따라 달라진다', () => {
+  const local = buildUrl({ bind: 'localhost', port: 8765, token: 'T' });
+  assert.equal(local, 'http://127.0.0.1:8765/?t=T');
+  const lan = buildUrl({ bind: 'lan', port: 9000, token: 'T' });
+  assert.match(lan, /^http:\/\/[0-9.]+:9000\/\?t=T$/);
 });
 
 // ── 파이프라인 엔진 (네트워크 없이 주입된 호출자로 검증) ─────────

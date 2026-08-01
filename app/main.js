@@ -81,6 +81,7 @@ app.whenReady().then(() => {
   if (saved && fs.existsSync(saved)) cfg = { ...cfg, cwd: saved };
   log('시작 · cwd =', cfg.cwd, '· 로그 =', logFile());
   createWindow();
+  syncRemote();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -103,6 +104,71 @@ ipcMain.handle('jini:init', async () => ({
 
 ipcMain.handle('jini:doctor', async () => doctor());
 
+// ── 리모트 컨트롤 ────────────────────────────────────────────────
+let remote = null;
+
+/** 설정에 맞춰 리모트 서버를 켜거나 끈다. 토큰이 없으면 만들어 저장한다. */
+async function syncRemote() {
+  const s = await import('../src/settings.js');
+  const { createRemoteServer, genToken } = await import('../src/remote/server.js');
+  const r = cfg.remote || {};
+
+  if (remote) {
+    await remote.stop();
+    remote = null;
+    log('리모트 중지');
+  }
+  if (!r.enabled) return null;
+
+  let token = r.token;
+  if (!token) {
+    token = genToken();
+    s.set('remote.token', token);
+    cfg = { ...cfg, remote: { ...r, token } };
+    log('리모트 토큰 자동 생성');
+  }
+
+  try {
+    const srv = createRemoteServer({
+      token,
+      port: r.port || 8765,
+      bind: r.bind || 'localhost',
+      runTask: async (task, emit) => {
+        const p = new Pipeline(cfg, ledger);
+        for (const ev of ['plan:done', 'step:start', 'step:done', 'step:error']) {
+          p.on(ev, (d) => {
+            emit(ev, d);
+            send('jini:event', { type: ev, data: d });
+          });
+        }
+        send('jini:event', { type: 'remote:task', data: { task } });
+        const out = await p.run(task);
+        emit('run:done', { final: out.final });
+        send('jini:event', { type: 'run:done', data: { final: out.final } });
+        send('jini:event', { type: 'ledger', data: { text: ledger.format() } });
+      },
+    });
+    const url = await srv.start();
+    remote = srv;
+    log('리모트 시작:', url);
+    return url;
+  } catch (e) {
+    log('리모트 시작 실패:', e.message);
+    return { error: e.message };
+  }
+}
+
+ipcMain.handle('jini:remote', async () => {
+  const r = cfg.remote || {};
+  return {
+    enabled: Boolean(r.enabled),
+    running: Boolean(remote),
+    url: remote ? remote.url : null,
+    bind: r.bind || 'localhost',
+    port: r.port || 8765,
+  };
+});
+
 ipcMain.handle('jini:settings', async (_e, { action, key, value } = {}) => {
   const s = await import('../src/settings.js');
   try {
@@ -112,6 +178,7 @@ ipcMain.handle('jini:settings', async (_e, { action, key, value } = {}) => {
       const cwd = cfg.cwd;
       cfg = { ...loadConfig({ backend: 'cli' }), cwd };
       log('설정 변경:', key, '=', JSON.stringify(v));
+      if (key.startsWith('remote.')) await syncRemote();
       return { ok: true, rows: s.list(), path: s.userConfigPath() };
     }
     if (action === 'reset') {

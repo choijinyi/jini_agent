@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('jini', {
   login: (id) => ipcRenderer.invoke('jini:login', { id }),
   install: (id) => ipcRenderer.invoke('jini:install', { id }),
   settings: (action, key, value) => ipcRenderer.invoke('jini:settings', { action, key, value }),
+  remote: () => ipcRenderer.invoke('jini:remote'),
   ledger: () => ipcRenderer.invoke('jini:ledger'),
   run: (task) => ipcRenderer.invoke('jini:run', { task }),
   ask: (to, prompt) => ipcRenderer.invoke('jini:ask', { to, prompt }),

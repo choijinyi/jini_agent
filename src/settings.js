@@ -27,6 +27,23 @@ export const SCHEMA = {
     label: '쓰기·실행 도구 승인 생략',
     scope: 'both',
   },
+  'remote.enabled': {
+    type: 'bool',
+    label: '리모트 컨트롤 (폰·다른 PC 브라우저에서 조종)',
+    scope: 'both',
+  },
+  'remote.bind': {
+    type: 'choice',
+    choices: ['localhost', 'lan'],
+    label: '접속 범위 (localhost=이 PC만 · lan=같은 네트워크)',
+    scope: 'both',
+  },
+  'remote.port': { type: 'int', min: 1024, max: 65535, label: '리모트 포트', scope: 'both' },
+  'remote.token': {
+    type: 'string',
+    label: '접속 토큰 (비우면 켤 때 자동 생성)',
+    scope: 'both',
+  },
   'providerModels.claude': { type: 'string', label: 'claude 모델 고정(빈값=CLI 기본)', scope: 'cli' },
   'providerModels.gemini': { type: 'string', label: 'gemini 모델 고정(빈값=CLI 기본)', scope: 'cli' },
   'providerModels.codex': { type: 'string', label: 'codex 모델 고정(빈값=CLI 기본)', scope: 'cli' },

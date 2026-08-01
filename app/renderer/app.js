@@ -332,6 +332,24 @@ function renderSettings(res) {
     });
   }
   $('settingsPath').textContent = `저장 위치: ${res.path}`;
+  showRemote();
+}
+
+/** 리모트 상태 — 접속 주소를 그대로 보여준다(폰 브라우저에 입력할 값). */
+async function showRemote() {
+  const r = await window.jini.remote();
+  const box = $('remoteBox');
+  if (!r.enabled) {
+    box.innerHTML = '<span class="dim">리모트 꺼짐 — 위 remote.enabled 를 true 로 바꾸면 켜집니다.</span>';
+    return;
+  }
+  if (!r.running) {
+    box.innerHTML = '<span class="rerr">리모트를 켤 수 없습니다. 포트 충돌일 수 있습니다(로그 확인).</span>';
+    return;
+  }
+  box.innerHTML =
+    `<div>접속 주소 <b>${esc(r.url)}</b></div>` +
+    `<div class="dim">${r.bind === 'lan' ? '같은 네트워크의 기기에서 접속 가능 — 토큰이 있어야 열립니다.' : '이 PC 에서만 접속 가능. 폰에서 쓰려면 remote.bind 를 lan 으로 바꾸세요.'}</div>`;
 }
 
 async function openSettings() {
