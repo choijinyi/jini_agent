@@ -44,6 +44,12 @@ export const SCHEMA = {
     label: '접속 토큰 (비우면 켤 때 자동 생성)',
     scope: 'both',
   },
+  bgPermissionMode: {
+    type: 'choice',
+    choices: ['default', 'acceptEdits', 'bypassPermissions', 'plan'],
+    label: '@bg 권한 모드 (default=매번 물음 · 폰 앱에서 승인)',
+    scope: 'cli',
+  },
   claudeConfigDir: {
     type: 'string',
     label: 'claude 설정 폴더 고정(빈값=기본 프로필 — 폰 앱 연동은 이 값이어야 함)',

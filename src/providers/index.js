@@ -360,12 +360,39 @@ export function parseBackgroundId(stdout) {
  * 다만 결과는 Jini 로 돌아오지 않는다 — `claude logs` 가 터미널 제어문자를 그대로 돌려줘
  * 구조적 회수가 불가능하기 때문이다(2026-08-01 실측). 그래서 파이프라인과 분리해 둔다.
  */
-export async function startBackgroundClaude(task, { cwd, timeout = 120_000, claudeConfigDir } = {}) {
+export async function startBackgroundClaude(
+  task,
+  {
+    cwd,
+    timeout = 120_000,
+    claudeConfigDir,
+    userSettingsOnly = true,
+    permissionMode = 'default',
+  } = {}
+) {
   // 프롬프트가 argv 로 들어가므로 줄바꿈은 공백으로 접는다(Windows argv 안전).
   const oneLine = String(task).replace(/\s*\r?\n\s*/g, ' ').trim();
   if (!oneLine) throw new Error('작업 내용이 비었습니다');
   // 세션마다 원격 제어를 켠다 — 사용자 설정에 없어도 폰 앱에서 보이도록 강제한다.
-  const args = ['--bg', '--settings', '{"remoteControlAtStartup":true}', oneLine];
+  const args = ['--bg', '--settings', '{"remoteControlAtStartup":true}'];
+
+  // 작업 폴더에 .mcp.json 이 있으면 Claude Code 가 "N개의 MCP 서버를 켤까요?" 선택
+  // 프롬프트를 띄우고, 백그라운드 세션은 거기서 blocked 로 멈춘다 — 작업을 한 줄도
+  // 시작하지 못한다(2026-08-01 실측).
+  //
+  // --strict-mcp-config 로는 해결되지 않는다(사용 제한일 뿐 발견 프롬프트는 그대로 뜬다 — 실측).
+  // 프로젝트 설정 자체를 읽지 않게 하는 --setting-sources user 가 실제로 통했다
+  // (같은 폴더에서 즉시 state=working).
+  if (userSettingsOnly) args.push('--setting-sources', 'user');
+
+  // 권한 모드. 기본값은 물어보게 두는 것이 안전하다 — 무인 세션이 임의로 파일을 고치거나
+  // 명령을 실행하지 않는다. 폰 앱이 "입력 필요" 알림을 띄우므로 거기서 승인하면 된다.
+  // 매번 승인하기 번거로우면 설정에서 acceptEdits / bypassPermissions 로 바꾼다.
+  if (permissionMode && permissionMode !== 'default') {
+    args.push('--permission-mode', safeToken(permissionMode, 'permissionMode'));
+  }
+
+  args.push(oneLine);
   const r = await spawnCli('claude', args, { cwd, timeout, env: claudeEnv(claudeConfigDir) });
   const out = `${r.stdout}\n${r.stderr}`;
   const id = parseBackgroundId(out);

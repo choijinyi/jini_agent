@@ -33,6 +33,8 @@ export const DEFAULTS = {
   // claude 설정 폴더. 빈 값이면 상속된 CLAUDE_CONFIG_DIR 을 무시하고 기본 프로필(~/.claude)을 쓴다
   // — 폰 클로드 앱의 기기 연결이 걸려 있는 프로필이 그것이기 때문이다.
   claudeConfigDir: '',
+  // @bg 세션의 권한 모드. 기본은 물어보게 둔다(무인 세션의 임의 실행 방지).
+  bgPermissionMode: 'default',
   // 리모트 컨트롤 — 기본은 꺼짐, 켜도 localhost 로만 열린다.
   remote: { enabled: false, bind: 'localhost', port: 8765, token: '' },
   // effort: low | medium | high | xhigh | max — 토큰 예산의 1차 레버.

@@ -239,6 +239,7 @@ ipcMain.handle('jini:bg', async (_e, { task }) => {
     const a = await startBackgroundClaude(task, {
       cwd: cfg.cwd,
       claudeConfigDir: cfg.claudeConfigDir || undefined,
+      permissionMode: cfg.bgPermissionMode || 'default',
     });
     log('백그라운드 에이전트 시작:', a.id);
     return { ok: true, ...a };

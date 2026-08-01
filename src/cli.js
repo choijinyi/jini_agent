@@ -252,7 +252,11 @@ export async function main(argv) {
       return;
     }
     try {
-      const a = await startBackgroundClaude(task, { cwd: cfg3.cwd });
+      const a = await startBackgroundClaude(task, {
+        cwd: cfg3.cwd,
+        claudeConfigDir: cfg3.claudeConfigDir || undefined,
+        permissionMode: cfg3.bgPermissionMode || 'default',
+      });
       console.log(`백그라운드 에이전트 시작: ${a.id}`);
       console.log('  클로드 스마트폰 앱·웹에서 이 세션이 보입니다(계정 로그인 기준).');
       console.log(`  이 터미널에서 붙기: ${a.attach}`);
