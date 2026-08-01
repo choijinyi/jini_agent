@@ -14,6 +14,9 @@ const HELP = `Jini Agent — 다중 AI 코딩 에이전트 (계정 로그인 방
   jini panel "질문"          3사 동시 질의 후 나란히 비교
   jini doctor               CLI 설치·인증 진단
   jini update               최신 버전으로 갱신
+  jini bg "작업"             Claude Code 백그라운드 에이전트로 넘김
+                            → 클로드 스마트폰 앱에서 보이고 이어서 조종 가능
+  jini agents               백그라운드 에이전트 목록
 
 프로바이더 (인증 = 각 CLI 의 계정 로그인 · API 키 불요)
   claude   오케스트레이션·코딩·심층추론 (마스터)
@@ -227,6 +230,38 @@ export async function main(argv) {
 
   if (sub === 'update') {
     return runUpdate();
+  }
+
+  if (sub === 'bg' || sub === 'agents') {
+    const cfg3 = loadConfig(flags);
+    const { startBackgroundClaude, listBackgroundAgents } = await import('./providers/index.js');
+    if (sub === 'agents') {
+      const rows = await listBackgroundAgents();
+      if (!rows.length) {
+        console.log('실행 중인 백그라운드 에이전트가 없습니다.');
+        return;
+      }
+      for (const a of rows) console.log(`  ${a.id}  ${a.status.padEnd(10)} ${a.name}`);
+      console.log('\n붙기: claude attach <id> · 중지: claude stop <id>');
+      return;
+    }
+    const task = words.slice(1).join(' ');
+    if (!task) {
+      console.error('사용법: jini bg "작업 지시"');
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const a = await startBackgroundClaude(task, { cwd: cfg3.cwd });
+      console.log(`백그라운드 에이전트 시작: ${a.id}`);
+      console.log('  클로드 스마트폰 앱·웹에서 이 세션이 보입니다(계정 로그인 기준).');
+      console.log(`  이 터미널에서 붙기: ${a.attach}`);
+      console.log(`  중지: ${a.stop}`);
+    } catch (e) {
+      console.error(`\x1b[31m[실패]\x1b[0m ${e.message}`);
+      process.exitCode = 1;
+    }
+    return;
   }
 
   if (sub === 'run') {

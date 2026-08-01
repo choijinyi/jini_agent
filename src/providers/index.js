@@ -300,6 +300,58 @@ export async function doctor(opts = {}) {
   return rows;
 }
 
+// ── Claude Code 백그라운드 에이전트 ──────────────────────────────
+
+/**
+ * `claude --bg` 출력에서 세션 id 를 뽑는다(순수 함수).
+ * 실측 출력: "backgrounded · 405fd68f" + 안내 줄들.
+ */
+export function parseBackgroundId(stdout) {
+  const m = stdout.match(/backgrounded\s*[·|-]\s*([0-9a-f]{6,})/i);
+  if (!m) throw new Error(`백그라운드 세션 id 를 찾지 못했습니다: ${stdout.slice(0, 200)}`);
+  return m[1];
+}
+
+/**
+ * Claude Code 백그라운드 에이전트로 작업을 넘긴다.
+ *
+ * 이 세션은 `claude agents` 목록과 클로드 앱에 나타나므로 폰에서 보고 이어서 조종할 수 있다.
+ * 다만 결과는 Jini 로 돌아오지 않는다 — `claude logs` 가 터미널 제어문자를 그대로 돌려줘
+ * 구조적 회수가 불가능하기 때문이다(2026-08-01 실측). 그래서 파이프라인과 분리해 둔다.
+ */
+export async function startBackgroundClaude(task, { cwd, timeout = 120_000 } = {}) {
+  // 프롬프트가 argv 로 들어가므로 줄바꿈은 공백으로 접는다(Windows argv 안전).
+  const oneLine = String(task).replace(/\s*\r?\n\s*/g, ' ').trim();
+  if (!oneLine) throw new Error('작업 내용이 비었습니다');
+  const r = await spawnCli('claude', ['--bg', oneLine], { cwd, timeout });
+  const out = `${r.stdout}\n${r.stderr}`;
+  const id = parseBackgroundId(out);
+  return {
+    id,
+    attach: `claude attach ${id}`,
+    logs: `claude logs ${id}`,
+    stop: `claude stop ${id}`,
+  };
+}
+
+/** 실행 중인 백그라운드 에이전트 목록(클로드 앱에 보이는 것과 같은 목록). */
+export async function listBackgroundAgents({ timeout = 60_000 } = {}) {
+  const r = await spawnCli('claude', ['agents', '--json'], { timeout });
+  try {
+    const all = JSON.parse(r.stdout.slice(r.stdout.indexOf('[')));
+    return all
+      .filter((a) => a.kind === 'background')
+      .map((a) => ({
+        id: String(a.sessionId || '').slice(0, 8),
+        name: a.name || '',
+        status: a.status || '실행 중',
+        cwd: a.cwd || '',
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /** 각 CLI 의 설치 패키지(2026-08-01 실측 — 전역 npm 목록에서 확인). */
 export const INSTALL = {
   claude: { pkg: '@anthropic-ai/claude-code' },

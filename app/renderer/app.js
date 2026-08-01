@@ -152,10 +152,22 @@ async function submit() {
   input.value = '';
   msg('user', '나', text);
 
+  // @bg 접두는 Claude Code 백그라운드 에이전트로 넘긴다(클로드 스마트폰 앱에서 보임)
+  const bg = text.match(/^@bg\s+([\s\S]+)$/i);
   // @provider 접두는 파이프라인을 건너뛰고 해당 AI 에 직접 묻는다
-  const direct = text.match(/^@(\w+)\s+([\s\S]+)$/);
+  const direct = !bg && text.match(/^@(\w+)\s+([\s\S]+)$/);
   try {
-    if (direct) {
+    if (bg) {
+      plan.innerHTML = '<p class="hint">백그라운드 에이전트로 넘기는 중…</p>';
+      const r = await window.jini.bg(bg[1]);
+      msg(
+        'sys',
+        '백그라운드 에이전트',
+        r.ok
+          ? `시작됨: ${r.id}\n클로드 스마트폰 앱·웹에서 이 세션이 보입니다(같은 계정).\n터미널에서 붙기: ${r.attach}\n중지: ${r.stop}`
+          : `실패: ${r.error}`
+      );
+    } else if (direct) {
       plan.innerHTML = `<p class="hint">${esc(direct[1])} 에 직접 질의 중…</p>`;
       const r = await window.jini.ask(direct[1], direct[2]);
       if (!r.ok) msg('error', '실패', r.error);

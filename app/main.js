@@ -231,6 +231,24 @@ ipcMain.handle('jini:login', async (_e, { id }) => {
   }
 });
 
+/** Claude Code 백그라운드 에이전트로 넘긴다 — 클로드 스마트폰 앱에서 보이는 세션. */
+ipcMain.handle('jini:bg', async (_e, { task }) => {
+  const { startBackgroundClaude } = await import('../src/providers/index.js');
+  try {
+    const a = await startBackgroundClaude(task, { cwd: cfg.cwd });
+    log('백그라운드 에이전트 시작:', a.id);
+    return { ok: true, ...a };
+  } catch (e) {
+    log('백그라운드 시작 실패:', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('jini:agents', async () => {
+  const { listBackgroundAgents } = await import('../src/providers/index.js');
+  return listBackgroundAgents();
+});
+
 ipcMain.handle('jini:install', async (_e, { id }) => {
   try {
     return { ok: true, ...openInstallTerminal(id) };

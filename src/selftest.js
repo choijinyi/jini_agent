@@ -22,6 +22,7 @@ import {
   LOGIN,
   INSTALL,
   installCommand,
+  parseBackgroundId,
 } from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
@@ -361,6 +362,18 @@ await check('로그인 판정 — gemini 는 설정이 키 방식이면 계정 �
   const acct = checkAuth('gemini', { home, env: { GEMINI_API_KEY: 'x' } });
   assert.equal(acct.method, 'account', 'oauth 선택 시 계정 우선');
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+await check('백그라운드 에이전트 id 파싱(실측 출력 형식)', () => {
+  const real = [
+    'Starting background service…',
+    'backgrounded · 405fd68f',
+    '  claude agents             list sessions',
+    '  claude attach 405fd68f    open in this terminal',
+  ].join('\n');
+  assert.equal(parseBackgroundId(real), '405fd68f');
+  assert.equal(parseBackgroundId('backgrounded - abc123def'), 'abc123def');
+  assert.throws(() => parseBackgroundId('아무 출력'), /찾지 못했습니다/);
 });
 
 await check('설치 명령이 프로바이더마다 정의돼 있다', () => {
