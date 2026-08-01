@@ -269,6 +269,83 @@ $('doctor').addEventListener('click', async () => {
   );
 });
 
+/* ── 설정 ────────────────────────────────────────────────── */
+const GROUP_LABEL = { cli: '계정 로그인 백엔드', both: '공통', api: 'API 백엔드 전용' };
+
+function renderSettings(res) {
+  const body = $('settingsBody');
+  body.innerHTML = '';
+  if (res.error) {
+    const e = document.createElement('div');
+    e.className = 'set-err';
+    e.textContent = res.error;
+    body.appendChild(e);
+  }
+  for (const scope of ['cli', 'both', 'api']) {
+    const rows = res.rows.filter((r) => r.scope === scope);
+    if (!rows.length) continue;
+    const h = document.createElement('div');
+    h.className = 'set-group';
+    h.textContent = GROUP_LABEL[scope];
+    body.appendChild(h);
+
+    rows.forEach((r) => {
+      const row = document.createElement('div');
+      row.className = `set-row${r.isDefault ? '' : ' custom'}`;
+
+      const k = document.createElement('div');
+      k.className = 'k';
+      k.innerHTML = `${esc(r.key)}<small>${esc(r.label)}</small>`;
+      row.appendChild(k);
+
+      let field;
+      if (r.type === 'choice' || r.type === 'bool') {
+        field = document.createElement('select');
+        const opts = r.type === 'bool' ? ['true', 'false'] : r.choices;
+        opts.forEach((o) => {
+          const op = document.createElement('option');
+          op.value = o;
+          op.textContent = o;
+          if (String(r.value) === o) op.selected = true;
+          field.appendChild(op);
+        });
+      } else {
+        field = document.createElement('input');
+        field.type = r.type === 'int' ? 'number' : 'text';
+        field.value = r.value === null || r.value === undefined ? '' : String(r.value);
+      }
+      field.onchange = async () => {
+        const out = await window.jini.settings('set', r.key, field.value);
+        renderSettings(out);
+        if (out.ok) msg('sys', '설정', `${r.key} = ${field.value}`);
+      };
+      row.appendChild(field);
+
+      const rst = document.createElement('button');
+      rst.className = 'reset';
+      rst.textContent = r.isDefault ? '기본값' : '되돌리기';
+      rst.disabled = r.isDefault;
+      rst.onclick = async () => renderSettings(await window.jini.settings('reset', r.key));
+      row.appendChild(rst);
+
+      body.appendChild(row);
+    });
+  }
+  $('settingsPath').textContent = `저장 위치: ${res.path}`;
+}
+
+$('settings').addEventListener('click', async () => {
+  renderSettings(await window.jini.settings('list'));
+  $('modal').classList.remove('hidden');
+});
+$('modalClose').addEventListener('click', () => $('modal').classList.add('hidden'));
+$('modal').addEventListener('click', (e) => {
+  if (e.target.id === 'modal') $('modal').classList.add('hidden');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('modal').classList.add('hidden');
+});
+
 /* ── 초기화 ──────────────────────────────────────────────── */
 (async () => {
   const info = await window.jini.init();

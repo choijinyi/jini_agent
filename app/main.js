@@ -103,6 +103,30 @@ ipcMain.handle('jini:init', async () => ({
 
 ipcMain.handle('jini:doctor', async () => doctor());
 
+ipcMain.handle('jini:settings', async (_e, { action, key, value } = {}) => {
+  const s = await import('../src/settings.js');
+  try {
+    if (action === 'set') {
+      const v = s.set(key, value);
+      // 저장 즉시 실행 설정에 반영한다(창을 다시 열지 않아도 된다).
+      const cwd = cfg.cwd;
+      cfg = { ...loadConfig({ backend: 'cli' }), cwd };
+      log('설정 변경:', key, '=', JSON.stringify(v));
+      return { ok: true, rows: s.list(), path: s.userConfigPath() };
+    }
+    if (action === 'reset') {
+      s.reset(key);
+      const cwd = cfg.cwd;
+      cfg = { ...loadConfig({ backend: 'cli' }), cwd };
+      log('설정 초기화:', key);
+      return { ok: true, rows: s.list(), path: s.userConfigPath() };
+    }
+    return { ok: true, rows: s.list(), path: s.userConfigPath() };
+  } catch (e) {
+    return { ok: false, error: e.message, rows: s.list(), path: s.userConfigPath() };
+  }
+});
+
 ipcMain.handle('jini:pickFolder', async () => {
   const r = await dialog.showOpenDialog(win, {
     properties: ['openDirectory'],

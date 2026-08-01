@@ -24,6 +24,7 @@ import {
   installCommand,
 } from './providers/index.js';
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
+import { SCHEMA, coerce, list as settingsList } from './settings.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -376,6 +377,40 @@ await check('로그인 안내 명령이 프로바이더마다 정의돼 있다',
   }
   assert.equal(LOGIN.claude.command, 'claude auth login');
   assert.equal(LOGIN.codex.command, 'codex login');
+});
+
+// ── 설정(/config) ────────────────────────────────────────────────
+
+await check('설정 스키마 — 모든 키에 라벨·타입·범위가 있다', () => {
+  for (const [key, s] of Object.entries(SCHEMA)) {
+    assert.ok(s.label, `${key} 라벨 없음`);
+    assert.ok(['bool', 'int', 'choice', 'string'].includes(s.type), `${key} 타입`);
+    assert.ok(['cli', 'api', 'both'].includes(s.scope), `${key} 스코프`);
+    if (s.type === 'choice') assert.ok(s.choices?.length, `${key} 선택지 없음`);
+  }
+});
+
+await check('설정 값 변환·검증 — 어긋난 값은 예외', () => {
+  assert.equal(coerce('autoApprove', 'true'), true);
+  assert.equal(coerce('autoApprove', 'off'), false);
+  assert.equal(coerce('readWindow', '300'), 300);
+  assert.equal(coerce('master', 'gemini'), 'gemini');
+  assert.throws(() => coerce('master', 'gpt5'), /중 하나/);
+  assert.throws(() => coerce('readWindow', '2.5'), /정수/);
+  assert.throws(() => coerce('readWindow', '10'), /최소/);
+  assert.throws(() => coerce('readWindow', '99999'), /최대/);
+  assert.throws(() => coerce('autoApprove', '아무거나'), /true\/false/);
+  assert.throws(() => coerce('없는키', 'x'), /알 수 없는 설정 키/);
+});
+
+await check('설정 목록 — 기본값 여부와 스코프가 함께 나온다', () => {
+  const rows = settingsList();
+  const master = rows.find((r) => r.key === 'master');
+  assert.equal(master.value, 'claude');
+  assert.equal(master.scope, 'cli');
+  assert.equal(typeof master.isDefault, 'boolean');
+  assert.ok(rows.some((r) => r.key === 'providerModels.claude'), '점 표기 키 누락');
+  assert.ok(rows.length >= 10);
 });
 
 // ── 파이프라인 엔진 (네트워크 없이 주입된 호출자로 검증) ─────────

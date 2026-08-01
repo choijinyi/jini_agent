@@ -28,6 +28,8 @@ export const DEFAULTS = {
   model: 'claude-opus-5',
   // effort 자동 강등의 '짧은 입력' 기준(문자).
   shortInputChars: 280,
+  // 한 턴에서 허용하는 최대 도구 호출 왕복.
+  maxHops: 25,
   // effort: low | medium | high | xhigh | max — 토큰 예산의 1차 레버.
   effort: 'medium',
   maxTokens: 16000,

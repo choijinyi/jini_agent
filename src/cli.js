@@ -26,10 +26,16 @@ const HELP = `Jini Agent — 다중 AI 코딩 에이전트 (계정 로그인 방
   --yolo             (api 백엔드) 쓰기·실행 승인 생략
   --help
 
+설정
+  jini config                전체 설정 보기
+  jini config <키> <값>       설정 변경 (예: jini config master gemini)
+  jini config reset <키>      기본값으로 되돌리기
+
 세션 명령
   /to <provider>  기본 대상 변경     /panel <질문>  3사 동시 질의
-  /doctor  진단                      /cost  토큰·비용 원장
-  /new     세션 새로 시작            /exit  종료`;
+  /config  설정 보기·변경            /cost  토큰·비용 원장
+  /doctor  진단                      /new   세션 새로 시작
+  /exit    종료`;
 
 function parseArgs(argv) {
   const flags = {};
@@ -49,6 +55,73 @@ function parseArgs(argv) {
     else rest.push(a);
   }
   return { flags, prompt: rest.join(' ').trim() };
+}
+
+/**
+ * jini config            전체 설정 보기
+ * jini config <키>        값 하나 보기
+ * jini config <키> <값>   저장
+ * jini config reset <키>  기본값으로
+ */
+async function runConfig(args) {
+  const { list, set, reset, userConfigPath, SCHEMA } = await import('./settings.js');
+
+  if (args[0] === 'reset') {
+    if (!args[1]) {
+      console.error('사용법: jini config reset <키>');
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const removed = reset(args[1]);
+      console.log(removed ? `${args[1]} → 기본값으로 되돌림` : `${args[1]} 은 이미 기본값입니다`);
+    } catch (e) {
+      console.error(`\x1b[31m${e.message}\x1b[0m`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (args.length >= 2) {
+    try {
+      const v = set(args[0], args.slice(1).join(' '));
+      console.log(`${args[0]} = ${JSON.stringify(v)}  (저장: ${userConfigPath()})`);
+    } catch (e) {
+      console.error(`\x1b[31m${e.message}\x1b[0m`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const rows = list();
+  if (args.length === 1) {
+    const r = rows.find((x) => x.key === args[0]);
+    if (!r) {
+      console.error(`알 수 없는 설정 키: ${args[0]}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${r.key} = ${JSON.stringify(r.value)}${r.isDefault ? '  (기본값)' : ''}`);
+    if (r.choices) console.log(`  가능: ${r.choices.join(' | ')}`);
+    return;
+  }
+
+  console.log(`설정  (파일: ${userConfigPath()})\n`);
+  for (const scope of ['cli', 'both', 'api']) {
+    const group = rows.filter((r) => r.scope === scope);
+    if (!group.length) continue;
+    const head = scope === 'cli' ? '계정 로그인 백엔드' : scope === 'api' ? 'API 백엔드 전용' : '공통';
+    console.log(`\x1b[1m${head}\x1b[0m`);
+    for (const r of group) {
+      const mark = r.isDefault ? '\x1b[90m·\x1b[0m' : '\x1b[32m*\x1b[0m';
+      const val = JSON.stringify(r.value);
+      console.log(`  ${mark} ${r.key.padEnd(24)} ${val.padEnd(20)} ${r.label}`);
+    }
+    console.log();
+  }
+  console.log('\x1b[90m* = 직접 지정한 값 · · = 기본값\x1b[0m');
+  console.log('\x1b[90m바꾸기: jini config <키> <값>   되돌리기: jini config reset <키>\x1b[0m');
+  void SCHEMA;
 }
 
 /** Electron 창을 띄운다. 전역 설치가 아닌 로컬 electron 바이너리를 쓴다. */
@@ -126,6 +199,10 @@ export async function main(argv) {
 
   if (sub === 'ui' || sub === 'app') {
     return launchUi();
+  }
+
+  if (sub === 'config') {
+    return runConfig(words.slice(1));
   }
 
   if (sub === 'run') {
@@ -241,6 +318,15 @@ async function replCli(state) {
       if (cmd === 'help') { console.log(HELP); continue; }
       if (cmd === 'cost') { console.log(ledger.format()); continue; }
       if (cmd === 'doctor') { await printDoctor(); continue; }
+      if (cmd === 'config') {
+        await runConfig(rest);
+        if (rest.length >= 2 || rest[0] === 'reset') {
+          Object.assign(cfg, loadConfig({}));
+          state.target = cfg.master;
+          console.log('\x1b[90m설정을 다시 읽었습니다.\x1b[0m');
+        }
+        continue;
+      }
       if (cmd === 'new') { state.sessions = {}; console.log('세션 새로 시작(원장은 유지).'); continue; }
       if (cmd === 'to') {
         if (!PROVIDERS[arg]) { console.log(`사용 가능: ${Object.keys(PROVIDERS).join(', ')}`); continue; }
