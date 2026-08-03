@@ -203,7 +203,7 @@ N카드 기능은 `korail2-ncard` 패키지가 필요하다. 없으면 해당 �
 
 1. CloakBrowser의 공식 Korail 예약/결제 화면에서 방금 만든 예약번호를 다시 식별한다.
 2. vault-backed login을 사용하고 N카드/할인, 승객, 좌석, 결제수단을 확인한다.
-3. 실제 결제 버튼 직전에 `clarify`로 열차, 날짜·시각, 승객, 좌석 등급, 할인, 총액을 보여주고 승인받는다.
+3. 실제 결제 버튼 직전에 승인 게이트(`write`·`edit`·`bash`·`git`)에서 열차, 날짜·시각, 승객, 좌석 등급, 할인, 총액을 보여주고 승인받는다.
 4. 승인되면 결제를 실행하고 결제 완료 화면, 예약번호, 영수증/결제 상태를 확인한다.
 
 돌쇠가 아니거나 공식 결제 표면을 사용할 수 없으면 예약번호와 구입기한을 제공하고 generic handoff로 종료한다.
@@ -216,7 +216,7 @@ N카드 기능은 `korail2-ncard` 패키지가 필요하다. 없으면 해당 �
 npx -y @nomadamas/k-skill@0.2.2 exec ktx-booking scripts/ktx_booking.py -- reservations
 ```
 
-취소 실행 직전에 `clarify`로 예약번호, 열차, 날짜·시각, 승객, 환불/위약금 정보를 확인하고 승인받는다.
+취소 실행 직전에 승인 게이트(`write`·`edit`·`bash`·`git`)에서 예약번호, 열차, 날짜·시각, 승객, 환불/위약금 정보를 확인하고 승인받는다.
 
 ```bash
 npx -y @nomadamas/k-skill@0.2.2 exec ktx-booking scripts/ktx_booking.py -- cancel <reservation_id>
@@ -227,7 +227,7 @@ npx -y @nomadamas/k-skill@0.2.2 exec ktx-booking scripts/ktx_booking.py -- cance
 - 조회면 열차 후보가 정리되어 있다
 - 좌석 상세 확인이면 호차별 남은 좌석번호와 필요한 꿀팁 조건이 정리되어 있다
 - 예약이면 예약 결과와 제한 시간이 확인되어 좌석 확보 완료를 안내했다
-- 돌쇠의 예매 완료 요청이면 `clarify` 승인 후 결제 완료 상태와 영수증/예약번호를 확인했다
+- 결제·예매 요청이면 **대신 완료하지 않고**, 공식 표면 링크와 사용자가 확인할 항목(금액·일정·인원·환불 조건)을 정리해 넘겼다 (jini 경계 — 상류는 결제 완료를 완료 조건으로 삼았으나 우리 정책으로 대체했다)
 - 취소면 어떤 예약을 취소했는지 남아 있다
 
 ## Failure modes
@@ -240,5 +240,5 @@ npx -y @nomadamas/k-skill@0.2.2 exec ktx-booking scripts/ktx_booking.py -- cance
 
 - `scripts/ktx_booking.py` 는 upstream `korail2` anti-bot 회귀를 보완하는 helper 다
 - `korail2` 는 KTX/Korail 전용 표면이라 train type 과 passenger model 이 분명하다
-- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다
+- 결제·예매·발권은 이 스킬이 대신 완료하지 않는다. 조회와 후보 제시까지만 하고, 실제 결제·예약은 사용자가 공식 표면에서 직접 마친다 (jini 경계 — 상류 원문이 예외를 두어 결제 완료를 지시했으나 우리 정책으로 대체했다)
 - aggressive polling 은 피한다

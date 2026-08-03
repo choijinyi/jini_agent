@@ -29,7 +29,7 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
-import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME } from './tools/skills-install.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME, applyBodyPolicy, scanBodyPolicy } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -1173,6 +1173,98 @@ await check('배포 목록(package.json files)에 skills 가 들어 있다', () 
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.ok(pkg.files.includes('skills'), 'files 배열에 skills 가 없습니다');
   assert.equal(pkg.scripts['skills:verify'], 'node ./src/tools/skills-verify.js');
+});
+
+// ── 출고 본문 정책 치환 (독립검증 지적 A′·B′·B″ · 2026-08-03) ──────────────────
+// 대조 범위가 상류 **머리말**뿐이었던 것이 범위 결함이었다. 모델이 실제로 받는 것은
+// SAFETY + **본문**이고, 머리말에서 없앤 결함이 본문에 그대로 남아 있었다.
+
+const policyRoot = (body) => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'policy-'));
+  fs.mkdirSync(path.join(dir, 'ktx-booking'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), body);
+  return dir;
+};
+
+await check('A′: 부재 도구 `clarify` 지시를 실재 승인 게이트 문구로 치환한다', () => {
+  // jini 실도구 10종에 clarify 는 없다. 부를 수 없는 도구로 승인받으라는 지시는
+  // 「안전 조항은 있고 기전은 없는 상태」 — 조항이 없는 것보다 나쁘다(거짓 보증).
+  const dir = policyRoot(
+    '3. 실제 결제 버튼 직전에 `clarify`로 총액을 보여주고 승인받는다.\n' +
+      '- 돌쇠의 예매 완료 요청이면 `clarify` 승인 후 영수증을 확인했다\n'
+  );
+  const r = applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/`clarify`/.test(out), 'clarify 도구 지시가 남았습니다');
+  assert.match(out, /승인 게이트\(`write`·`edit`·`bash`·`git`\)/, '실재 기전 이름이 들어가지 않았습니다');
+  assert.equal(r.residual.clarify.length, 0);
+});
+
+await check('B″: 「결제 완료」를 완료 조건으로 삼은 Done when 문장을 우리 경계로 치환한다', () => {
+  // A′ 만으로는 부족하다 — 도구 이름을 실재 기전으로 바꿔도 「결제를 완료해야 끝」이라는
+  // 목표가 남으면 모델은 여전히 결제로 향한다. 기전이 아니라 목표를 고쳐야 하는 항목이다.
+  const dir = policyRoot('- 돌쇠의 예매 완료 요청이면 `clarify` 승인 후 결제 완료 상태를 확인했다\n');
+  const r = applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.match(out, /대신 완료하지 않고/, '경계 문구로 치환되지 않았습니다');
+  assert.ok(!/결제 완료 상태를 확인했다/.test(out), '결제 완료가 완료 조건으로 남았습니다');
+  assert.equal(r.residual.payment.length, 0);
+});
+
+await check('B′: Notes 절의 결제 예외 문장을 치환한다 (삭제가 아니라 대체)', () => {
+  const dir = policyRoot(
+    '- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다\n'
+  );
+  applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/generic fallback에만 적용한다/.test(out), '경계 충돌 문장이 남았습니다');
+  assert.match(out, /사용자가 공식 표면에서 직접 마친다/);
+  assert.match(out, /jini 경계/, '무엇을 왜 바꿨는지 본문에 남지 않았습니다');
+});
+
+await check('치환 순서 강제: B 계열이 A′ 보다 먼저 — 아니면 경계 위반이 살아남는다', () => {
+  // A′ 를 먼저 돌리면 B 문장이 「승인 게이트 통과 후 … 완료한다」로 바뀌어
+  // 문장은 그럴듯해지고 **경계 위반은 그대로 남는다.** 가장 위험한 실패 모드다.
+  const dir = policyRoot(
+    '- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다\n'
+  );
+  applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/공식 결제 표면으로 완료한다/.test(out), 'A′ 가 먼저 돌아 경계 위반이 살아남았습니다');
+});
+
+await check('치환은 멱등이다 — 재설치·재실행에 누적되지 않는다', () => {
+  const dir = policyRoot(
+    '3. `clarify`로 총액을 승인받는다.\n' +
+      '- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다\n'
+  );
+  applyBodyPolicy(dir);
+  const once = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  const again = applyBodyPolicy(dir);
+  assert.equal(again.clarify.hits, 0, '2회차에 또 치환했습니다');
+  assert.equal(again.payment.hits, 0, '2회차에 또 치환했습니다');
+  assert.equal(fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8'), once);
+});
+
+await check('산문 속 영어 clarify 는 결함이 아니다 — 상류 본문을 뜻 없이 훼손하지 않는다', () => {
+  // 「### 1. Clarify the need」는 「필요를 명확히 하라」는 제목이지 도구 호출이 아니다.
+  // 이 구분이 없으면 잔존 0 을 영원히 만족시킬 수 없고, 지우면 원문을 훼손한다.
+  const dir = policyRoot('### 1. Clarify the need\n\n검색어가 너무 넓으면 좁힌다.\n');
+  const r = applyBodyPolicy(dir);
+  assert.equal(r.residual.clarify.length, 0, '산문을 결함으로 셌습니다');
+  assert.equal(r.residual.prose.length, 1, '산문 언급을 기록하지 않았습니다(은닉 금지)');
+  assert.match(
+    fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8'),
+    /Clarify the need/,
+    '산문을 훼손했습니다'
+  );
+});
+
+await check('실측: 이 저장소 출고 본문에 정책 위반 잔존 0 (전수 재스캔)', () => {
+  // 지시 3항 — 대조 대상은 머리말이 아니라 「모델이 실제로 받는 것」이다.
+  const r = scanBodyPolicy(SKILLS_ROOT);
+  assert.deepEqual(r.clarify, [], `부재 도구 지시 잔존: ${r.clarify.join(', ')}`);
+  assert.deepEqual(r.payment, [], `경계 충돌 잔존: ${r.payment.join(', ')}`);
 });
 
 await check('--check-upstream: 고정본이 최신이면 차이 0 으로 보고한다', async () => {

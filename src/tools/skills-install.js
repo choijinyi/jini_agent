@@ -76,6 +76,137 @@ export function pinNpxVersion(dir, version) {
 }
 
 /**
+ * ★출고 본문 치환 2종 (독립검증 지적 A′·B′ — 2026-08-03)
+ *
+ * 대조표를 상류 **머리말**만 대상으로 삼은 것이 범위 결함이었다. 모델이 실제로 받는 것은
+ * SAFETY 규약 + **벤더 본문**이고, 머리말에서 없앤 두 결함이 본문에 그대로 남아 있었다.
+ * 손편집하면 재설치에 되살아나므로 `pinNpxVersion` 과 같은 층(설치기)에 넣는다.
+ *
+ * ⚠순서 의존: B′ 를 먼저 돌려야 한다. A′ 를 먼저 돌리면 B′ 문장이
+ * 「승인 게이트 통과 후 공식 결제 표면으로 완료한다」로 바뀌어 **경계 위반이 그대로 남는다.**
+ * `applyBodyPolicy` 가 그 순서를 강제한다.
+ */
+
+/** B′: 결제 실행까지 밀어붙이는 문장. 오너 경계(실행·예약·결제 금지)와 정면 충돌한다. */
+export const PAYMENT_OVERRIDE =
+  /^.*결제 자동화 금지는 generic fallback에만 적용한다\..*완료한다.*$/gm;
+
+export const PAYMENT_OVERRIDE_TEXT =
+  '- 결제·예매·발권은 이 스킬이 대신 완료하지 않는다. 조회와 후보 제시까지만 하고, ' +
+  '실제 결제·예약은 사용자가 공식 표면에서 직접 마친다 ' +
+  '(jini 경계 — 상류 원문이 예외를 두어 결제 완료를 지시했으나 우리 정책으로 대체했다)';
+
+/**
+ * B″: 「Done when」 절이 **결제·예매 완료를 성공 조건으로** 못박은 문장.
+ *
+ * 범위를 출고 페이로드 전체로 넓히자(지시 3항) 새로 드러난 것이다 — 독립검증이 지적한 B′ 2곳은
+ * `## Notes` 절이었고, 이쪽은 `## Done when` 절이라 양쪽 스캔이 모두 놓쳤다.
+ * A′ 치환만으로는 부족하다: 도구 이름을 실재 기전으로 바꿔도 **「결제를 완료해야 끝」이라는 목표가
+ * 그대로 남기 때문이다.** 기전을 고치고 목표를 두면 모델은 여전히 결제로 향한다.
+ *
+ * 장바구니 담기(`장바구니에 담긴 것을 확인했다`)는 **일부러 건드리지 않았다** — 결제·예약이 아니고
+ * 오너·master 가 지적한 경계도 그것이 아니다. 판단이 필요한 항목이라 master 에 올린다.
+ */
+export const PAYMENT_DONE = /^-\s*돌쇠.*(결제|주문번호|예매|예약 흐름).*확인했다.*$/gm;
+
+export const PAYMENT_DONE_TEXT =
+  '- 결제·예매 요청이면 **대신 완료하지 않고**, 공식 표면 링크와 사용자가 확인할 항목' +
+  '(금액·일정·인원·환불 조건)을 정리해 넘겼다 ' +
+  '(jini 경계 — 상류는 결제 완료를 완료 조건으로 삼았으나 우리 정책으로 대체했다)';
+
+/**
+ * A′: 존재하지 않는 `clarify` 도구 호출 지시. 안전 조항이 문자로만 있고 기전이 없는 상태가
+ * 가장 나쁘다 — 거짓 보증을 만들기 때문이다. 실재하는 기전(NEEDS_APPROVAL 승인 게이트)으로 이름을 바꾼다.
+ */
+export const CLARIFY_CALL = /`clarify`로/g;
+export const CLARIFY_AFTER = /`clarify` 승인 후/g;
+const CLARIFY_CALL_TEXT = '승인 게이트(`write`·`edit`·`bash`·`git`)에서';
+const CLARIFY_AFTER_TEXT = '승인 게이트 통과 후';
+
+/** `.md`/`.txt` 를 훑어 주어진 치환쌍을 적용한다. 반환값은 파일수·건수. */
+function rewrite(dir, pairs) {
+  let files = 0;
+  let hits = 0;
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(md|txt)$/i.test(e.name)) continue;
+      const src = fs.readFileSync(p, 'utf8');
+      let out = src;
+      let n = 0;
+      for (const [re, to] of pairs) {
+        n += (out.match(re) || []).length;
+        out = out.replace(re, to);
+      }
+      if (!n) continue;
+      fs.writeFileSync(p, out, 'utf8');
+      files++;
+      hits += n;
+    }
+  };
+  walk(dir);
+  return { files, hits };
+}
+
+/** 출고 본문 정책 치환. 치환 후 잔존을 스스로 검사해 반환한다(멱등 — 재실행 시 hits 0). */
+export function applyBodyPolicy(dir) {
+  const payment = rewrite(dir, [
+    [PAYMENT_OVERRIDE, PAYMENT_OVERRIDE_TEXT], // B′ (Notes 절)
+    [PAYMENT_DONE, PAYMENT_DONE_TEXT], // B″ (Done when 절) — 둘 다 A′ 보다 먼저
+  ]);
+  const clarify = rewrite(dir, [
+    [CLARIFY_AFTER, CLARIFY_AFTER_TEXT],
+    [CLARIFY_CALL, CLARIFY_CALL_TEXT],
+  ]);
+  return { payment, clarify, residual: scanBodyPolicy(dir) };
+}
+
+/**
+ * 치환이 놓친 잔존을 전수 보고한다. 위 두 패턴이 아닌 형태로 `clarify` 가 쓰였을 수 있으므로
+ * **치환 성공을 가정하지 않고 다시 센다** — 「고쳤다」와 「고쳐졌다」는 다르다.
+ * (실제로 이 검사가 3번째 형태를 하나 잡아냈다. 확인해 보니 위양성이었지만, 그 판별을
+ *  사람이 눈으로 한 것이 아니라 이 검사가 후보를 내놓은 덕에 가능했다.)
+ *
+ * **`clarify` 를 도구로 지시하는 형태만 결함으로 센다.** 판별 기준은 백틱 표기(`` `clarify` ``)와
+ * 「clarify 도구/tool」이다. 산문 속 영어 낱말(예: 제목 `### 1. Clarify the need` — 「필요를
+ * 명확히 하라」는 뜻)은 도구 호출 지시가 아니므로 결함이 아니고, `prose` 로 따로 보고한다.
+ * 이 구분을 하지 않으면 잔존 0 을 영원히 만족시킬 수 없고, 반대로 산문을 지워 버리면
+ * 상류 본문을 뜻 없이 훼손한다.
+ */
+export function scanBodyPolicy(dir) {
+  const clarify = [];
+  const prose = [];
+  const payment = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(md|txt)$/i.test(e.name)) continue;
+      const lines = fs.readFileSync(p, 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        const rel = path.relative(dir, p);
+        const at = `${rel}:${i + 1}`;
+        if (/`clarify`|clarify\s*(도구|tool)/i.test(line)) clarify.push(at);
+        else if (/clarify/i.test(line)) prose.push(at);
+        if (/결제 자동화 금지는 generic fallback/.test(line) || PAYMENT_DONE.test(line)) {
+          payment.push(at);
+        }
+        PAYMENT_DONE.lastIndex = 0; // /g 정규식은 상태를 갖는다 — 줄마다 초기화해야 건너뛰지 않는다
+      });
+    }
+  };
+  walk(dir);
+  return { clarify, prose, payment };
+}
+
+/**
  * Claude Code 플러그인 매니페스트를 쓴다. 벤더 CLI 는 이 파일의 `skills` 목록만 보므로
  * **설치 목록이 곧 노출 목록**이 된다 — 채택 게이트가 런타임까지 관철되는 지점이다.
  *
@@ -156,6 +287,7 @@ export function install({ tarball } = {}) {
   const pruned = pruneExtraneous(SKILLS_DIR, placed);
 
   const pin = pinNpxVersion(SKILLS_DIR, doc.source.npx_pin);
+  const body = applyBodyPolicy(SKILLS_DIR);
   writePluginManifest(SKILLS_DIR, placed);
 
   // 라이선스 고지. 루트 MIT 원문을 함께 둔다(스킬별 LICENSE.upstream 은 디렉터리째 복사되므로 자동 동봉).
@@ -175,6 +307,26 @@ export function install({ tarball } = {}) {
             files: pin.files,
             occurrences: pin.hits,
           },
+          {
+            what:
+              '「결제 자동화 금지는 generic fallback에만 적용한다 … 공식 결제 표면으로 완료한다」 ' +
+              '→ 「결제·예매·발권은 이 스킬이 대신 완료하지 않는다 …」',
+            why:
+              '상류 원문이 특정 환경에서는 결제를 완료하라고 예외를 두는데, jini 경계는 ' +
+              '설치는 하되 실행·예약·결제를 금지한다. 정면 충돌이라 우리 정책 문구로 대체했다. 삭제가 아니라 치환이다.',
+            files: body.payment.files,
+            occurrences: body.payment.hits,
+          },
+          {
+            what: '`clarify` 도구 호출 지시 → 승인 게이트(`write`·`edit`·`bash`·`git`) 문구',
+            why:
+              'jini 에 `clarify` 라는 도구는 존재하지 않는다(실도구 10종에 없음). 모델이 부를 수 없는 ' +
+              '도구로 승인을 받으라고 지시하면 안전 절차가 실행되지 않는데 문서상으로는 안전 조항이 있는 ' +
+              '상태가 된다 — 조항이 없는 것보다 나쁘다(거짓 보증). 실재하는 기전인 NEEDS_APPROVAL 승인 ' +
+              '게이트로 이름을 바꿨다. 조항을 옮긴 것이 아니라 기전을 실재화한 것이다.',
+            files: body.clarify.files,
+            occurrences: body.clarify.hits,
+          },
         ],
         names: placed.sort(),
       },
@@ -185,7 +337,7 @@ export function install({ tarball } = {}) {
 
   fs.rmSync(tmp, { recursive: true, force: true });
   if (missing.length) throw new Error(`저장소에 없는 스킬: ${missing.join(', ')}`);
-  return { placed, pruned, pin, dir: SKILLS_DIR, commit };
+  return { placed, pruned, pin, body, dir: SKILLS_DIR, commit };
 }
 
 /**

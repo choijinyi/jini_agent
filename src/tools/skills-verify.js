@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { SKILLS_DIR, loadAllowlist, NPX_FLOATING } from './skills-install.js';
+import { SKILLS_DIR, loadAllowlist, NPX_FLOATING, scanBodyPolicy } from './skills-install.js';
 import { loadSkills, manifestNames } from './skills.js';
 
 /** 상류 부동 semver(`@0`)가 스킬 콘텐츠에 남아 있는지 전수 검사. */
@@ -54,6 +54,7 @@ export function verify(dir = SKILLS_DIR, { allowlistFile } = {}) {
   const { names: approved } = allowlistFile ? loadAllowlist(allowlistFile) : loadAllowlist();
   const { skills, skipped } = loadSkills(dir);
   const floating = scanFloating(dir);
+  const body = scanBodyPolicy(dir);
   const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   const sorted = [...manifest].sort();
 
@@ -96,6 +97,17 @@ export function verify(dir = SKILLS_DIR, { allowlistFile } = {}) {
       ok: skills.length === manifest.length,
       detail: `노출 ${skills.length} / 제외 ${skipped.length}`,
       extra: () => skipped.map((s) => `${s.name}: ${s.reason}`),
+    },
+    {
+      // 독립검증 지적(2026-08-03): 대조 범위가 상류 머리말뿐이라 본문에 남은 결함을 놓쳤다.
+      // 모델이 실제로 받는 것은 본문이므로 **출고 본문**을 검사 대상에 넣는다.
+      name: '출고 본문 정책 위반 0 (부재 도구 지시·경계 충돌)',
+      ok: body.clarify.length === 0 && body.payment.length === 0,
+      detail: `부재 도구 지시 ${body.clarify.length}곳 · 경계 충돌 ${body.payment.length}곳`,
+      extra: () => [
+        ...body.clarify.map((l) => `존재하지 않는 clarify 도구 지시: ${l}`),
+        ...body.payment.map((l) => `실행·예약·결제 경계 충돌: ${l}`),
+      ],
     },
   ];
 
