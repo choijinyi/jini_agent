@@ -1299,6 +1299,38 @@ await check('판단 대기 예외는 결함 0 과 구분해 센다 — 패턴을
   assert.equal(r.pending.length, PENDING_JUDGMENT.length, '선언된 예외 수와 실측이 다릅니다');
 });
 
+await check('A″: 부재 자격증명 도구 지시를 치환하되 보호 문구는 보존한다', () => {
+  // ★같은 줄 뒤쪽에 보호 문구가 붙어 있다. 줄째 치환하면 보호까지 지워 **퇴행**이다.
+  // 그래서 문장 단위로 자른다(마침표를 넘지 않는다).
+  const dir = policyRoot(
+    '- 돌쇠 credential mode에서는 `vault-run` capability를 사용하고, 없으면 `request_vault_credential`을 호출한다. ID/PW 원문을 채팅이나 shell에 넣지 않는다.\n' +
+      '3. 로그인이 필요하면 provisioned vault capability를 사용하고, 없으면 `request_vault_credential`로 쿠팡 login을 저장한 뒤 같은 turn에 재개한다.\n'
+  );
+  const r = applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/request_vault_credential|`vault-run`/.test(out), '부재 도구 지시가 남았습니다');
+  assert.match(out, /ID\/PW 원문을 채팅이나 shell에 넣지 않는다/, '보호 문구가 지워졌습니다(퇴행)');
+  assert.match(out, /^- 자격증명은 사용자가 직접 입력한다/m, '불릿 머리가 보존되지 않았습니다');
+  assert.match(out, /^3\. 로그인·키 입력은 사용자가 직접 수행한다/m, '번호 머리가 보존되지 않았습니다');
+  assert.equal(r.residual.clarify.length, 0);
+});
+
+await check('선언된 예외는 설치 검증 출력에 드러난다 — 조용한 예외는 구멍이다', () => {
+  // master 조건2. 사용자가 설치 화면에서 예외를 보게 한다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  const r = spawnSync(process.execPath, [path.join('src', 'tools', 'skills-verify.js')], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  if (verifySkills().status === 'none') return; // 스킬 없는 체크아웃은 해당 없음
+  assert.match(out, new RegExp(`정책 예외 ${PENDING_JUDGMENT.length}건`), '예외 개수가 출력되지 않았습니다');
+  for (const p of PENDING_JUDGMENT) {
+    assert.ok(out.includes(p.at), `예외 위치가 출력되지 않았습니다: ${p.at}`);
+  }
+  assert.ok(!/정책 예외 1건:/.test(out), '개수를 하드코딩한 출력이 남아 있습니다');
+});
+
 await check('실측: 이 저장소 출고 본문에 정책 위반 잔존 0 (전수 재스캔)', () => {
   // 지시 3항 — 대조 대상은 머리말이 아니라 「모델이 실제로 받는 것」이다.
   const r = scanBodyPolicy(SKILLS_ROOT);

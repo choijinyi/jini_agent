@@ -26,6 +26,12 @@
       "why": "경계의 기준은 가역성이 아니라 에이전트가 오너의 실제 계정에 상태를 만드느냐다. 상류는 「장바구니 담기는 가역적이므로 별도 승인 없이 수행」이라고 적었으나 그 근거를 기각했다. 특히 「승인되면 결제를 실행하고」는 승인 요청 줄 바로 다음 줄에 있어 승인 문구만 고치면 살아남는다 — 기전을 고치고 목표를 두면 문장이 그럴듯해져 위험이 더 잘 숨는다.",
       "files": 3,
       "occurrences": 7
+    },
+    {
+      "what": "부재 자격증명 도구 호출 지시(request_vault_credential · vault-run capability) → 「자격증명은 사용자가 직접 입력한다 …」 (coupang 141 · foresttrip 45·72 · kosis-stats 63 · kstartup-search 43 · ktx 41·67 · naver-ad-performance 32 · srt 35·60)",
+      "why": "request_vault_credential 과 vault-run 은 jini 에 존재하지 않는 도구다(실도구 10종에 없음) — clarify 와 같은 계열이며 기전 없는 조항이다. 특히 coupang:141 은 로그인 정보를 저장한 뒤 재개하라고 지시해 「자격증명 대행 금지」 조항과 정면 충돌한다. ★문장 단위로 치환했다 — 같은 줄 뒤쪽의 보호 문구(ID/PW 원문을 채팅·shell 에 넣지 않는다)와 generic fallback 환경변수 경로를 통째 치환으로 지우면 그것이 퇴행이기 때문이다. 9개 스킬 전부 균일 처리했다.",
+      "files": 7,
+      "occurrences": 10
     }
   ],
   "names": [

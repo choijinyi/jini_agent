@@ -40,7 +40,7 @@ API helper는 조회 전용이다. 돌쇠에서 사용자가 사업 신청을 �
 
 ### Credential resolution order (`--direct` 전용)
 
-1. 돌쇠 credential mode에서는 provisioned `vault-run` capability를 사용하고, 없으면 `request_vault_credential`로 K-Startup API key 입력 UI를 호출한다.
+1. 로그인·키 입력은 사용자가 직접 수행한다. 에이전트가 자격증명을 저장하거나 대신 입력하지 않는다 (jini 경계).
 2. 그 밖의 환경에서는 이미 주입된 환경변수 → host vault → `~/.config/k-skill/secrets.env` (`0600`) 순서로 사용한다.
 3. generic fallback에서 값이 없으면 호스트의 가장 안전한 입력 표면으로 받아 vault 또는 dotenv에 저장한다.
 

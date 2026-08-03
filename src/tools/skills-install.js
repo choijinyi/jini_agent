@@ -166,6 +166,35 @@ export const PAYMENT_DONE_TEXT =
   '(jini 경계 — 상류는 결제 완료를 완료 조건으로 삼았으나 우리 정책으로 대체했다)';
 
 /**
+ * A″: 존재하지 않는 **자격증명 도구** 호출 지시(`request_vault_credential` · `vault-run`).
+ * `clarify` 와 같은 계열이다 — jini 실도구 10종에 없다.
+ *
+ * ★**문장 단위로 자른다.** 같은 줄 뒤쪽에 보호 문구(「ID/PW 원문을 채팅이나 shell에 넣지 않는다」)와
+ * 실제 대체 경로(「generic fallback에서만 KSKILL_… 환경변수를 확인한다」)가 붙어 있어서,
+ * 줄째 치환하면 **보호까지 지워 퇴행**한다. 그래서 `[^.\n]*` 로 마침표를 넘지 않게 하고
+ * 앞머리(불릿·번호)는 캡처해 되살린다.
+ */
+const CRED = '`request_vault_credential`';
+export const CREDENTIAL_PAIRS = [
+  // 불릿 줄 — foresttrip:45 · ktx:41 · srt:35 (뒤에 보호 문구가 남는다)
+  [
+    /^(-\s*)돌쇠[^.\n]*`request_vault_credential`[^.\n]*\./gm,
+    '$1자격증명은 사용자가 직접 입력한다. 에이전트가 대신 로그인하거나 자격증명을 저장하지 않는다 (jini 경계).',
+  ],
+  // 번호 줄 — coupang:141(로그인 저장) · kosis:63 · kstartup:43 (API key 입력 UI)
+  [
+    /^(\d+\.\s*)[^.\n]*`request_vault_credential`[^.\n]*\./gm,
+    '$1로그인·키 입력은 사용자가 직접 수행한다. 에이전트가 자격증명을 저장하거나 대신 입력하지 않는다 (jini 경계).',
+  ],
+  // 문단 중간·줄머리 — foresttrip:72 · ktx:67 · srt:60 · naver-ad-performance:32
+  //   (앞 문장과 뒤의 generic fallback 문장을 건드리지 않는다)
+  [
+    /(^|\.\s+)돌쇠[^.\n]*`request_vault_credential`[^.\n]*\./gm,
+    '$1자격증명은 사용자가 직접 입력한다. 에이전트가 대신 로그인하거나 자격증명을 저장하지 않는다 (jini 경계).',
+  ],
+];
+
+/**
  * A′: 존재하지 않는 `clarify` 도구 호출 지시. 안전 조항이 문자로만 있고 기전이 없는 상태가
  * 가장 나쁘다 — 거짓 보증을 만들기 때문이다. 실재하는 기전(NEEDS_APPROVAL 승인 게이트)으로 이름을 바꾼다.
  */
@@ -214,7 +243,8 @@ export function applyBodyPolicy(dir) {
     [CLARIFY_AFTER, CLARIFY_AFTER_TEXT],
     [CLARIFY_CALL, CLARIFY_CALL_TEXT],
   ]);
-  return { payment, clarify, residual: scanBodyPolicy(dir) };
+  const credential = rewrite(dir, CREDENTIAL_PAIRS);
+  return { payment, clarify, credential, residual: scanBodyPolicy(dir) };
 }
 
 /**
@@ -265,8 +295,10 @@ export function scanBodyPolicy(dir) {
       lines.forEach((line, i) => {
         const rel = path.relative(dir, p);
         const at = `${rel}:${i + 1}`;
+        // 부재 도구 지시 — clarify 와 자격증명 도구를 같은 계열로 센다(둘 다 jini 에 없다).
         if (/`clarify`|clarify\s*(도구|tool)/i.test(line)) clarify.push(at);
         else if (/clarify/i.test(line)) prose.push(at);
+        if (/request_vault_credential|`vault-run`|provisioned vault/.test(line)) clarify.push(at);
         // 경계 충돌 잔존. 「승인되면 … 실행」처럼 **실행을 지시하는 형태**까지 본다 —
         // 승인 요청 줄만 고치고 바로 다음 줄의 실행 지시를 놓친 것이 B‴ 였다.
         const boundary =

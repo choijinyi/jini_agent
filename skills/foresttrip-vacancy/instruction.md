@@ -42,7 +42,7 @@ Optional:
 
 ### Credential handling
 
-- 돌쇠 credential mode에서는 `vault-run` capability를 사용하고, 없으면 `request_vault_credential`을 호출한다. ID/PW 원문을 채팅이나 shell에 넣지 않는다.
+- 자격증명은 사용자가 직접 입력한다. 에이전트가 대신 로그인하거나 자격증명을 저장하지 않는다 (jini 경계). ID/PW 원문을 채팅이나 shell에 넣지 않는다.
 - 그 밖의 환경에서는 이미 주입된 환경변수 → host vault → `~/.config/k-skill/secrets.env` 순서로 사용한다.
 - Generic helper 자체는 `KSKILL_FORESTTRIP_ID`, `KSKILL_FORESTTRIP_PASSWORD` 환경변수만 읽는다.
 
@@ -69,7 +69,7 @@ Optional:
 
 ### 1. Ensure credentials are available
 
-돌쇠 credential mode에서는 숲나들e capability를 사용하고, 없으면 `request_vault_credential`을 호출한다. generic fallback에서만 `KSKILL_FORESTTRIP_ID`, `KSKILL_FORESTTRIP_PASSWORD`를 확인한다.
+자격증명은 사용자가 직접 입력한다. 에이전트가 대신 로그인하거나 자격증명을 저장하지 않는다 (jini 경계). generic fallback에서만 `KSKILL_FORESTTRIP_ID`, `KSKILL_FORESTTRIP_PASSWORD`를 확인한다.
 
 시크릿이 없다는 이유로 대체 사이트, 캡차 우회, 비공식 예약 경로를 찾지 않는다.
 

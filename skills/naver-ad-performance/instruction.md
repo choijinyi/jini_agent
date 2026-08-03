@@ -29,7 +29,7 @@
 - 네이버 검색광고 계정 (searchad.naver.com) → **도구 > API 사용 관리**에서 API 키/시크릿 발급
 - 환경변수 3개: `NAVER_AD_API_KEY`, `NAVER_AD_SECRET_KEY`, `NAVER_AD_CUSTOMER_ID`
 
-키는 사용자가 직접 발급한다. 돌쇠에서는 에이전트가 값을 보지 않도록 provisioned `vault-run` capability를 사용하고, 없으면 `request_vault_credential`로 앱 vault 입력 UI를 호출한다. generic fallback에서는 환경변수/host vault/`secrets.env` 순서를 사용한다.
+키는 사용자가 직접 발급한다. 자격증명은 사용자가 직접 입력한다. 에이전트가 대신 로그인하거나 자격증명을 저장하지 않는다 (jini 경계). generic fallback에서는 환경변수/host vault/`secrets.env` 순서를 사용한다.
 
 ## Workflow
 

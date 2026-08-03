@@ -6,12 +6,12 @@
  *
  * 판정 3종:
  *  - `none`  스킬이 없다(매니페스트 부재). 설치 실패가 아니다 — 에이전트는 스킬 없이 정상 동작한다.
- *  - `ok`    아래 5개 검사 전부 통과.
+ *  - `ok`    아래 검사 전부 통과(현재 7종).
  *  - `fail`  하나라도 어긋남. **설치를 중단시키지는 않되** 무엇이 어긋났는지 이름을 찍는다.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { SKILLS_DIR, loadAllowlist, NPX_FLOATING, scanBodyPolicy } from './skills-install.js';
+import { SKILLS_DIR, loadAllowlist, NPX_FLOATING, scanBodyPolicy, PENDING_JUDGMENT } from './skills-install.js';
 import { loadSkills, manifestNames } from './skills.js';
 
 /** 상류 부동 semver(`@0`)가 스킬 콘텐츠에 남아 있는지 전수 검사. */
@@ -105,7 +105,7 @@ export function verify(dir = SKILLS_DIR, { allowlistFile } = {}) {
       ok: body.clarify.length === 0 && body.payment.length === 0,
       detail: `부재 도구 지시 ${body.clarify.length}곳 · 경계 충돌 ${body.payment.length}곳`,
       extra: () => [
-        ...body.clarify.map((l) => `존재하지 않는 clarify 도구 지시: ${l}`),
+        ...body.clarify.map((l) => `존재하지 않는 도구 호출 지시: ${l}`),
         ...body.payment.map((l) => `실행·예약·결제 경계 충돌: ${l}`),
       ],
     },
@@ -136,6 +136,12 @@ function main() {
   for (const c of r.checks) {
     console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name} (${c.detail})`);
     if (!c.ok) for (const line of c.extra()) console.log(`       - ${line}`);
+  }
+  // 선언된 예외를 설치 화면에 **드러낸다.** 조용한 예외는 예외가 아니라 구멍이다(master 조건2).
+  // 개수는 목록 길이로 찍는다 — "1건"을 박아 두면 예외가 늘 때 출력이 조용히 거짓이 된다.
+  if (PENDING_JUDGMENT.length) {
+    console.log(`[skills] 정책 예외 ${PENDING_JUDGMENT.length}건 (검사 통과가 아니라 판단 대기다):`);
+    for (const p of PENDING_JUDGMENT) console.log(`[skills]   - ${p.at} — ${p.why}`);
   }
   // 잔여 위험 고지. 설치자가 마지막에 읽는 문장이므로 "안전합니다"라고 쓰지 않는다 —
   // 우리가 한 것은 제거가 아니라 고정·선별·기록이고, 그 차이를 숨기면 거짓 보증이 된다.
