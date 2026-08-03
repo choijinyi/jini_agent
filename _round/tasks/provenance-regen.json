@@ -1,0 +1,27 @@
+{
+ "id": "provenance-regen",
+ "title": "PROVENANCE 원장 재생성 정합 수리",
+ "status": "done",
+ "why": "재설치 한 번으로 B‴·A″ 기록이 사라지는 구조적 결함 — 은닉 금지 원칙이 재생성 시점에 깨진다",
+ "goal": "modifications 를 applyBodyPolicy 반환값에서 생성 + 재생성 정합 검사 추가",
+ "blocked_by": [],
+ "origin_kind": "manual",
+ "origin_fingerprint": "default",
+ "owner": null,
+ "created_at": "2026-08-03T20:21:34+0900",
+ "updated_at": "2026-08-03T20:23:00+0900",
+ "evidence": {
+  "type": "evidence",
+  "text": "실데이터 재생성 정합: 상류 원문(ffc76fe~1) 트리에 적용해 계열 건수 boundary=6·clarify=5·account-state=7·credential=10 산출 → 커밋본 PROVENANCE 5항목의 4/6·3/5·3/7·7/10 과 전부 일치. negative-case: 멱등 2회차 전 계열 0 hits·sha256 차분 0. negative-case2: 첫 멱등 측정이 이미 치환된 트리라 1회차 0 으로 공허 통과했음을 발견해 기준본 무오염 확인을 측정 순서에 추가. selftest 99 → 102 exit 0 FAIL 0",
+  "at": "2026-08-03T20:23:00+0900",
+  "artifacts": [
+   {
+    "path": "_round/evidence/provenance-regen/verification.md",
+    "size": 10071,
+    "mtime": 1785756179.452,
+    "sha256_8": "fde4c9d5",
+    "anchor": "created_at-fallback"
+   }
+  ]
+ }
+}
