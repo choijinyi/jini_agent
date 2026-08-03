@@ -29,7 +29,7 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
-import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME, applyBodyPolicy, scanBodyPolicy } from './tools/skills-install.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME, applyBodyPolicy, scanBodyPolicy, PENDING_JUDGMENT } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -1258,6 +1258,45 @@ await check('산문 속 영어 clarify 는 결함이 아니다 — 상류 본문
     /Clarify the need/,
     '산문을 훼손했습니다'
   );
+});
+
+await check('B‴: 「승인되면 결제를 실행하고」 류 실행 지시를 제거한다', () => {
+  // ★가장 잘 숨었던 형태 — 승인을 요청하는 줄 **바로 다음 번호 줄**이 실행 지시였다.
+  // A′ 로 승인 줄만 고치면 문장이 그럴듯해지고 실행 지시는 살아남는다(B″ 교훈의 재발).
+  const dir = policyRoot(
+    '3. 실제 결제 버튼 직전에 `clarify`로 총액을 보여주고 승인받는다.\n' +
+      '4. 승인되면 결제를 실행하고 결제 완료 화면, 예약번호, 영수증/결제 상태를 확인한다.\n'
+  );
+  const r = applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/승인되면 결제를 실행/.test(out), '결제 실행 지시가 남았습니다');
+  assert.match(out, /결제는 실행하지 않는다/);
+  assert.equal(r.residual.payment.length, 0);
+});
+
+await check('B‴: 계정 상태 생성(장바구니) 지시를 제거한다 — 가역성은 근거가 아니다', () => {
+  // master 판정: 경계 기준은 「비가역이냐」가 아니라 「오너의 실제 계정에 상태를 만드느냐」다.
+  // 상류는 「가역적이므로 별도 승인 없이 수행」이라고 적었는데 그 근거가 기각된 것이다.
+  const dir = policyRoot(
+    '4. 옵션과 수량을 선택해 장바구니에 담는다. 장바구니 담기는 가역적이므로 별도 승인 없이 수행하고 실제 담김 상태를 확인한다.\n'
+  );
+  applyBodyPolicy(dir);
+  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
+  assert.ok(!/별도 승인 없이 수행/.test(out), '승인 없이 수행하라는 지시가 남았습니다');
+  assert.match(out, /장바구니에 담지 않는다/);
+  assert.match(out, /오너 계정에 상태를 만드는 실행/, '기각된 근거를 대체한 논거가 없습니다');
+});
+
+await check('판단 대기 예외는 결함 0 과 구분해 센다 — 패턴을 지워 0 을 만들지 않는다', () => {
+  // 스캐너 패턴을 지워 잔존 0 을 만드는 것은 검사를 속이는 것이다.
+  // 예외는 이름으로 선언하고 **따로 세어** 보이게 둔다 — 잔존 0 과 예외 1 은 다른 말이다.
+  assert.ok(PENDING_JUDGMENT.length >= 1, '선언된 예외 목록이 비었습니다');
+  for (const p of PENDING_JUDGMENT) {
+    assert.match(p.at, /^[\w-]+\/[\w.-]+:\d+$/, `예외 위치 형식이 아닙니다: ${p.at}`);
+    assert.ok(p.why && p.why.length > 10, `예외에 사유가 없습니다: ${p.at}`);
+  }
+  const r = scanBodyPolicy(SKILLS_ROOT);
+  assert.equal(r.pending.length, PENDING_JUDGMENT.length, '선언된 예외 수와 실측이 다릅니다');
 });
 
 await check('실측: 이 저장소 출고 본문에 정책 위반 잔존 0 (전수 재스캔)', () => {

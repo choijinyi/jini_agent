@@ -109,6 +109,57 @@ export const PAYMENT_OVERRIDE_TEXT =
  */
 export const PAYMENT_DONE = /^-\s*돌쇠.*(결제|주문번호|예매|예약 흐름).*확인했다.*$/gm;
 
+/**
+ * B‴: **결제·주문을 실제로 실행하라는 지시**와 **오너 계정에 상태를 만드는 지시**.
+ *
+ * master 판정(2026-08-03): 경계의 기준은 「비가역이냐」가 아니라
+ * **「에이전트가 오너의 실제 계정에 상태를 만드느냐」**다. 장바구니는 되돌릴 수 있어도
+ * 오너 계정에 실제 상태를 만드는 실행이므로 경계에 해당한다.
+ *
+ * ⚠이 묶음은 A′ 치환 **직후 줄**에 있어서 놓쳤던 것들이다. 승인을 요청하는 줄은 고쳤는데
+ * 바로 다음 번호 줄이 「승인되면 결제를 실행하고」였다 — B″ 에서 스스로 적은 실패 모드
+ * (기전을 고치고 목표를 두면 문장이 그럴듯해져 위험이 가려진다)를 한 줄 아래에서 다시 반복한 셈이다.
+ * 그래서 라벨을 붙여 **곳마다 몇 건 맞았는지 세어** 보고한다.
+ */
+export const ACCOUNT_STATE_PAIRS = [
+  [
+    // 결제/주문 실행 — ktx:207 · srt:140
+    /^\d+\.\s*승인되면 결제를 실행하고.*$/gm,
+    '4. 결제는 실행하지 않는다. 공식 결제 화면까지만 안내하고, 확인할 항목' +
+      '(열차·일시·인원·운임·환불 조건)을 정리해 사용자가 직접 마치게 한다 (jini 경계)',
+  ],
+  [
+    // 결제/주문 실행 — coupang:144
+    /^\d+\.\s*.*승인되면 주문\/결제를 실행해.*$/gm,
+    '6. 주문·결제는 실행하지 않는다. 상품·옵션·수량·배송지·최종 금액을 정리해 보여주고, ' +
+      '공식 주문 화면 링크를 넘겨 사용자가 직접 마치게 한다 (jini 경계)',
+  ],
+  [
+    // 최종 주문 직전까지 밀어붙이는 지시 — coupang:143
+    /^\d+\.\s*구매 요청이면.*최종 주문 직전까지 진행한다.*$/gm,
+    '5. 구매 요청이라도 배송지·쿠폰·결제수단을 대신 적용하지 않는다. ' +
+      '무엇을 확인해야 하는지 정리해 사용자에게 넘긴다 (jini 경계)',
+  ],
+  [
+    // ★승인 없이 장바구니에 담으라는 지시 — coupang:142.
+    //   「가역적이므로 별도 승인 없이」라는 근거를 master 가 명시적으로 기각했다.
+    /^\d+\.\s*옵션과 수량을 선택해 장바구니에 담는다.*$/gm,
+    '4. 장바구니에 담지 않는다. 옵션·수량을 정리해 보여주고 공식 상품 페이지 링크를 넘긴다 — ' +
+      '가역적이라도 오너 계정에 상태를 만드는 실행이므로 대신 하지 않는다 (jini 경계)',
+  ],
+  [
+    // 조회에서 멈추지 말라는 지시 — coupang:137
+    /^사용자가 구매나 장바구니 담기를 요청했고.*멈추지 않는다.*$/gm,
+    '사용자가 구매나 장바구니 담기를 요청해도 이 스킬은 조회와 링크 제공에서 멈춘다 ' +
+      '(jini 경계 — 상류는 여기서 계속 진행하라고 지시했으나 우리 정책으로 대체했다).',
+  ],
+  [
+    // 장바구니 담김을 완료 조건으로 삼은 문장 — coupang:218 (master 지시 항목)
+    /^-\s*돌쇠의 장바구니 요청이면.*$/gm,
+    '- 장바구니 요청이면 담지 않고, 선택할 옵션·수량과 공식 상품 페이지 링크를 정리해 넘겼다 (jini 경계)',
+  ],
+];
+
 export const PAYMENT_DONE_TEXT =
   '- 결제·예매 요청이면 **대신 완료하지 않고**, 공식 표면 링크와 사용자가 확인할 항목' +
   '(금액·일정·인원·환불 조건)을 정리해 넘겼다 ' +
@@ -156,7 +207,8 @@ function rewrite(dir, pairs) {
 export function applyBodyPolicy(dir) {
   const payment = rewrite(dir, [
     [PAYMENT_OVERRIDE, PAYMENT_OVERRIDE_TEXT], // B′ (Notes 절)
-    [PAYMENT_DONE, PAYMENT_DONE_TEXT], // B″ (Done when 절) — 둘 다 A′ 보다 먼저
+    [PAYMENT_DONE, PAYMENT_DONE_TEXT], // B″ (Done when 절)
+    ...ACCOUNT_STATE_PAIRS, // B‴ (실행 지시·계정 상태 생성) — 전부 A′ 보다 먼저
   ]);
   const clarify = rewrite(dir, [
     [CLARIFY_AFTER, CLARIFY_AFTER_TEXT],
@@ -177,10 +229,30 @@ export function applyBodyPolicy(dir) {
  * 이 구분을 하지 않으면 잔존 0 을 영원히 만족시킬 수 없고, 반대로 산문을 지워 버리면
  * 상류 본문을 뜻 없이 훼손한다.
  */
+/**
+ * 판단 대기 예외 — **결함이지만 아직 고치지 않기로 한 것**을 이름으로 박아 둔다.
+ *
+ * `iros-registry-automation` 은 장바구니 담기가 **선언된 기능 자체**다(등기부등본을 담아 두고
+ * 사용자가 직접 결제·열람한다). coupang 은 이름이 `-search` 라 장바구니를 빼도 목적이 손상되지
+ * 않지만 이쪽은 다르다 — master 의 coupang 근거가 그대로 옮겨가지 않는다. 그래서 판단을 올렸다.
+ *
+ * ⚠스캐너 패턴을 지워 잔존 0 을 만드는 방식은 쓰지 않는다. 그건 검사를 속이는 것이고,
+ * 오늘 우리가 금지한 「조항은 있고 기전은 없는 상태」를 우리가 만드는 셈이다.
+ * 대신 **예외를 선언하고 세어서 보고**한다 — 잔존 0 과 예외 1 은 다른 말이다.
+ */
+export const PENDING_JUDGMENT = [
+  {
+    at: 'iros-registry-automation/instruction.md:219',
+    why: '장바구니 담기가 이 스킬의 선언된 기능이라 제거하면 스킬이 무의미해진다 — master 판단 대기',
+  },
+];
+
 export function scanBodyPolicy(dir) {
   const clarify = [];
   const prose = [];
   const payment = [];
+  const pending = [];
+  const declared = new Set(PENDING_JUDGMENT.map((p) => p.at));
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
@@ -195,15 +267,22 @@ export function scanBodyPolicy(dir) {
         const at = `${rel}:${i + 1}`;
         if (/`clarify`|clarify\s*(도구|tool)/i.test(line)) clarify.push(at);
         else if (/clarify/i.test(line)) prose.push(at);
-        if (/결제 자동화 금지는 generic fallback/.test(line) || PAYMENT_DONE.test(line)) {
-          payment.push(at);
-        }
+        // 경계 충돌 잔존. 「승인되면 … 실행」처럼 **실행을 지시하는 형태**까지 본다 —
+        // 승인 요청 줄만 고치고 바로 다음 줄의 실행 지시를 놓친 것이 B‴ 였다.
+        const boundary =
+          /결제 자동화 금지는 generic fallback/.test(line) ||
+          /승인되면 결제를 실행|승인되면 주문\/결제를 실행|최종 주문 직전까지 진행/.test(line) ||
+          /장바구니에 담는다|장바구니에 담긴 것을 확인/.test(line) ||
+          /장바구니 담기를 요청했고.*멈추지 않는다/.test(line) ||
+          PAYMENT_DONE.test(line);
+        // 선언된 예외는 결함 목록이 아니라 예외 목록으로 센다(숨기지 않고 분리한다).
+        if (boundary) (declared.has(at.replace(/\\/g, '/')) ? pending : payment).push(at);
         PAYMENT_DONE.lastIndex = 0; // /g 정규식은 상태를 갖는다 — 줄마다 초기화해야 건너뛰지 않는다
       });
     }
   };
   walk(dir);
-  return { clarify, prose, payment };
+  return { clarify, prose, payment, pending };
 }
 
 /**
