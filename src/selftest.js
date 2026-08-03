@@ -1222,15 +1222,46 @@ await check('B′: Notes 절의 결제 예외 문장을 치환한다 (삭제가 
   assert.match(out, /jini 경계/, '무엇을 왜 바꿨는지 본문에 남지 않았습니다');
 });
 
-await check('치환 순서 강제: B 계열이 A′ 보다 먼저 — 아니면 경계 위반이 살아남는다', () => {
-  // A′ 를 먼저 돌리면 B 문장이 「승인 게이트 통과 후 … 완료한다」로 바뀌어
-  // 문장은 그럴듯해지고 **경계 위반은 그대로 남는다.** 가장 위험한 실패 모드다.
-  const dir = policyRoot(
-    '- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다\n'
-  );
-  applyBodyPolicy(dir);
-  const out = fs.readFileSync(path.join(dir, 'ktx-booking', 'instruction.md'), 'utf8');
-  assert.ok(!/공식 결제 표면으로 완료한다/.test(out), 'A′ 가 먼저 돌아 경계 위반이 살아남았습니다');
+await check('치환 결과는 계열 적용 순서와 무관하다 — 순서 의존 주장은 측정으로 반박됐다', () => {
+  // ★이 검사명은 원래 「B 계열이 A′ 보다 먼저 — 아니면 경계 위반이 살아남는다」였다.
+  // 그 주장은 **틀렸다.** B 계열 패턴은 A 계열이 건드리지 않는 부분
+  // (`결제 자동화 금지는 …`·`승인되면 결제를 실행`·`돌쇠…확인했다`)에 걸리므로
+  // A′ 가 먼저 돌아도 B 패턴의 매칭 조건이 훼손되지 않는다.
+  // 반박된 주장을 검사명에 남겨 두면 그 문장이 기계가 보증한 사실처럼 읽힌다 —
+  // 그래서 검사를 **측정된 사실**(순서 무관)을 고정하는 쪽으로 바꿔 적었다.
+  const body =
+    '- 결제 자동화 금지는 generic fallback에만 적용한다. 돌쇠에서는 `clarify` 승인 후 공식 결제 표면으로 완료한다\n' +
+    '3. 실제 결제 버튼 직전에 `clarify`로 총액을 보여주고 승인받는다.\n' +
+    '4. 승인되면 결제를 실행하고 영수증을 확인한다.\n';
+
+  const bFirst = policyRoot(body);
+  applyBodyPolicy(bFirst); // 계열 표 순서(B 계열이 앞)
+  const outB = fs.readFileSync(path.join(bFirst, 'ktx-booking', 'instruction.md'), 'utf8');
+
+  // A 계열을 먼저 돌린 뒤 B 계열을 돌려도 같은 결과가 나오는지 본다.
+  const aFirst = policyRoot(body);
+  const apply = (dir, pairs) => {
+    const p = path.join(dir, 'ktx-booking', 'instruction.md');
+    let s = fs.readFileSync(p, 'utf8');
+    for (const [re, to] of pairs) {
+      re.lastIndex = 0;
+      s = s.replace(re, to);
+    }
+    fs.writeFileSync(p, s, 'utf8');
+  };
+  const byKey = (k) => POLICY_GROUPS.find((g) => g.key === k).pairs;
+  apply(aFirst, byKey('clarify'));
+  apply(aFirst, byKey('boundary'));
+  apply(aFirst, byKey('account-state'));
+  apply(aFirst, byKey('credential'));
+  const outA = fs.readFileSync(path.join(aFirst, 'ktx-booking', 'instruction.md'), 'utf8');
+
+  assert.equal(outA, outB, '적용 순서에 따라 결과가 달라졌습니다(순서 의존이 실재한다면 여기서 깨진다)');
+  // 어느 순서든 경계 위반은 남지 않는다.
+  for (const out of [outA, outB]) {
+    assert.ok(!/공식 결제 표면으로 완료한다/.test(out), '경계 위반이 살아남았습니다');
+    assert.ok(!/승인되면 결제를 실행/.test(out), '결제 실행 지시가 살아남았습니다');
+  }
 });
 
 await check('치환은 멱등이다 — 재설치·재실행에 누적되지 않는다', () => {
