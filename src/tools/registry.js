@@ -7,6 +7,8 @@
  *     tool_search 로 호출할 때 스키마가 컨텍스트에 올라온다.
  */
 
+import { skillTools } from './skills.js';
+
 const str = (description) => ({ type: 'string', description });
 
 export const CORE_TOOLS = [
@@ -119,13 +121,17 @@ const TOOL_SEARCH = { type: 'tool_search_tool_regex_20251119', name: 'tool_searc
 /**
  * 요청에 실을 tools 배열을 만든다.
  * deferTools=false 이면 전 도구를 즉시 로드한다(왕복 1회 절약, 프리픽스 증가).
+ *
+ * 설치된 스킬은 **지연 분기에만** 실린다. 즉시 로드 분기에 120개를 섞으면 프리픽스가
+ * 실측 +12,666토큰 불어난다 — 지연 도구가 프리픽스에서 제외된다는 성질이 (b)안의 전제다.
  */
-export function buildTools(cfg) {
+export function buildTools(cfg, { skillRoot } = {}) {
   if (!cfg.deferTools) return [...CORE_TOOLS, ...DEFERRED_TOOLS];
   return [
     TOOL_SEARCH,
     ...CORE_TOOLS,
     ...DEFERRED_TOOLS.map((t) => ({ ...t, defer_loading: true })),
+    ...skillTools(skillRoot).map((t) => ({ ...t, defer_loading: true })),
   ];
 }
 

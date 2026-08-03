@@ -31,6 +31,15 @@ import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
 import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, SAFE_NAME } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
+import {
+  skillTools,
+  loadSkills,
+  parseFrontmatter,
+  skillBody,
+  manifestNames,
+  SAFETY,
+  SKILLS_ROOT,
+} from './tools/skills.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -808,6 +817,152 @@ await check('게이트 관철: plugin.json 은 승인분만·이름 오름차순
   const again = writePluginManifest(dir, ['mid', 'zebra', 'alpha']); // 입력 순서만 다름
   assert.deepEqual(again.skills, m.skills, '입력 순서에 따라 목록이 흔들립니다');
   assert.ok(fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json')));
+});
+
+// ── (b)안 배선: api 백엔드 스킬 지연 도구 ──────────────────────────────────
+
+/** frontmatter 만 있는 최소 SKILL.md. */
+const skillMd = (name, desc) => `---\nname: ${name}\ndescription: ${desc}\nlicense: MIT\n---\n\n# ${name}\n`;
+
+/** 임시 스킬 루트. 매니페스트까지 써야 노출된다(설치 목록 = 노출 목록). */
+function fakeSkillRoot(files, { manifest = Object.keys(files) } = {}) {
+  const dir = fs.mkdtempSync(path.join(tmp, 'sk-'));
+  for (const [name, body] of Object.entries(files)) {
+    fs.mkdirSync(path.join(dir, name), { recursive: true });
+    fs.writeFileSync(path.join(dir, name, 'SKILL.md'), body);
+  }
+  if (manifest) writePluginManifest(dir, manifest);
+  return dir;
+}
+
+await check('(b)안: 스킬 1개당 지연 도구 1개가 이름 오름차순으로 생긴다', () => {
+  const dir = fakeSkillRoot({
+    'b-two': skillMd('b-two', '두 번째 스킬'),
+    'a-one': skillMd('a-one', '첫 번째 스킬'),
+  });
+  const tools = skillTools(dir);
+  assert.equal(tools.length, 2);
+  // 정렬이 흔들리면 도구 배열이 바뀌고 tools·system·messages 캐시가 통째로 날아간다(성공기준 3).
+  assert.deepEqual(tools.map((t) => t.name), ['skill_a_one', 'skill_b_two']);
+  assert.equal(tools[0].description, '첫 번째 스킬', 'description 은 벤더 원문 그대로여야 합니다');
+  assert.deepEqual(tools[0].input_schema, { type: 'object', properties: {} });
+});
+
+await check('(b)안: 스킬 도구는 전부 지연이고 비지연 도구·tool_search 계약이 유지된다', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  const tools = buildTools({ ...cfg, deferTools: true }, { skillRoot: dir });
+  const skills = tools.filter((t) => t.name?.startsWith('skill_'));
+  assert.equal(skills.length, 1);
+  assert.ok(skills.every((t) => t.defer_loading === true), '스킬 도구가 비지연으로 실렸습니다');
+  // 전량 지연이면 400(At least one tool must have defer_loading=false).
+  assert.ok(tools.some((t) => t.input_schema && !t.defer_loading), '비지연 도구가 하나도 없습니다');
+  const search = tools.find((t) => typeof t.type === 'string' && t.type.startsWith('tool_search'));
+  assert.ok(search, 'tool_search 가 없습니다');
+  assert.ok(!('defer_loading' in search), 'tool_search 에 defer_loading 이 붙으면 400 입니다');
+});
+
+await check('(b)안: deferTools=false 분기에는 스킬이 실리지 않는다(프리픽스 폭발 방지)', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  const tools = buildTools({ ...cfg, deferTools: false }, { skillRoot: dir });
+  assert.ok(!tools.some((t) => t.name?.startsWith('skill_')), '즉시 로드 분기에 스킬이 섞였습니다');
+  assert.deepEqual(tools.map((t) => t.name).slice(0, CORE_TOOLS.length), CORE_TOOLS.map((t) => t.name));
+});
+
+await check('(b)안: 시스템 프롬프트는 스킬 설치 여부와 무관하게 바이트 동일하다(성공기준 3)', () => {
+  // 프리픽스에 스킬 정보가 새어 들어가는 순간 캐시가 매 설치마다 무효화된다.
+  const before = JSON.stringify(buildSystem(cfg));
+  buildTools({ ...cfg, deferTools: true }, { skillRoot: fakeSkillRoot({ solo: skillMd('solo', 'x') }) });
+  assert.equal(JSON.stringify(buildSystem(cfg)), before);
+  assert.ok(!before.includes('skill_'), 'system 블록에 스킬 이름이 들어 있습니다');
+});
+
+await check('(b)안: 노출 목록은 plugin.json 이 정한다(디스크에 있어도 매니페스트에 없으면 미노출)', () => {
+  const dir = fakeSkillRoot(
+    { listed: skillMd('listed', '노출됨'), stray: skillMd('stray', '매니페스트에 없음') },
+    { manifest: ['listed'] }
+  );
+  assert.deepEqual(loadSkills(dir).skills.map((s) => s.name), ['listed']);
+  assert.ok(fs.existsSync(path.join(dir, 'stray')), '테스트 전제(디스크에는 존재)가 깨졌습니다');
+});
+
+await check('(b)안: 매니페스트가 없으면 api 경로 노출도 0 이다(CLI 경로와 같은 게이트)', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') }, { manifest: null });
+  assert.equal(manifestNames(dir), null);
+  assert.deepEqual(skillTools(dir), []);
+  assert.equal(skillsPluginDir(path.dirname(dir)), null); // CLI 경로도 동시에 닫힌다
+});
+
+await check('frontmatter 파서: 실측 4형태(평문·홑따옴표·겹따옴표·블록 |)를 같게 읽는다', () => {
+  const plain = parseFrontmatter('---\nname: a\ndescription: 값 하나\n---\n');
+  const single = parseFrontmatter("---\nname: a\ndescription: '값 하나'\n---\n");
+  const dbl = parseFrontmatter('---\nname: a\ndescription: "값 하나"\n---\n');
+  for (const p of [plain, single, dbl]) assert.equal(p.description, '값 하나');
+  const block = parseFrontmatter('---\nname: a\ndescription: |\n  첫 줄\n  둘째 줄\nlicense: MIT\n---\n');
+  assert.equal(block.description, '첫 줄\n둘째 줄');
+  assert.equal(parseFrontmatter("---\nname: a\ndescription: 'it''s'\n---\n").description, "it's");
+});
+
+await check('frontmatter 파서 negative-case: 결함은 조용히 넘어가지 않고 사유와 함께 실패한다', () => {
+  assert.throws(() => parseFrontmatter('# 제목만 있는 파일\n'), /frontmatter/);
+  assert.throws(() => parseFrontmatter('---\ndescription: 설명만\n---\n'), /name/);
+  assert.throws(() => parseFrontmatter('---\nname: a\n---\n'), /description/);
+  // 결함 스킬은 목록에서 빠지되 사유가 남는다.
+  const dir = fakeSkillRoot({ broken: '설명 없는 본문\n', fine: skillMd('fine', '정상') });
+  const { skills, skipped } = loadSkills(dir);
+  assert.deepEqual(skills.map((s) => s.name), ['fine']);
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0].reason, /frontmatter/);
+});
+
+await check('frontmatter 파서: 디렉터리명과 name 이 다르면 노출하지 않는다', () => {
+  const dir = fakeSkillRoot({ 'dir-name': skillMd('other-name', '설명') });
+  const { skills, skipped } = loadSkills(dir);
+  assert.equal(skills.length, 0);
+  assert.match(skipped[0].reason, /불일치/);
+});
+
+await check('skill_* 핸들러는 안전 문구를 본문 **앞**에 붙여 로컬 사본을 돌려준다', async () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  fs.writeFileSync(path.join(dir, 'solo', 'instruction.md'), '로컬 전체 지침 본문');
+  const out = skillBody('skill_solo', dir);
+  assert.ok(out.startsWith(SAFETY), '안전 문구가 앞에 없습니다(잘리면 규약이 사라집니다)');
+  assert.ok(out.includes('로컬 전체 지침 본문'), 'instruction.md 본문이 없습니다');
+  assert.ok(out.includes('로컬 사본이다'), '로컬 경로 고지가 없습니다');
+  assert.ok(!out.includes('npx -y @nomadamas'), '네트워크 경로를 지시하고 있습니다');
+});
+
+await check('skill_* 핸들러: 없는 스킬·경로 조작은 본문을 열지 않고 실패한다', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  assert.throws(() => skillBody('skill_nope', dir), /설치되지 않은 스킬/);
+  assert.throws(() => skillBody('skill_../../etc/passwd', dir), /허용되지 않는 스킬 이름/);
+});
+
+await check('skill_* 는 execTool 로 라우팅되고 결과 상한에 잘리지 않는다', async () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  fs.writeFileSync(path.join(dir, 'solo', 'instruction.md'), 'ㄱ'.repeat(9000));
+  // execTool 은 기본 SKILLS_ROOT 를 보므로, 임시 루트 검증은 skillBody 로 하고
+  // 라우팅 자체(알 수 없는 도구로 떨어지지 않는지)와 상한 예외만 여기서 본다.
+  const long = skillBody('skill_solo', dir);
+  assert.ok(long.length > cfg.toolResultCap, '테스트 전제(상한 초과)가 깨졌습니다');
+  await assert.rejects(() => execTool('skill_없는이름', {}, cfg, {}), /허용되지 않는 스킬 이름/);
+  await assert.rejects(() => execTool('nosuchtool', {}, cfg, {}), /알 수 없는 도구/);
+});
+
+await check('실측: 설치본 노출 목록 = plugin.json 목록 · 보류분 미노출', () => {
+  // 스킬 미설치 저장소에서도 도는 테스트다 — 그때는 "노출 0" 이 정답이다.
+  const names = manifestNames(SKILLS_ROOT);
+  const tools = skillTools(SKILLS_ROOT);
+  if (!names) {
+    assert.equal(tools.length, 0, '매니페스트가 없는데 스킬이 노출됐습니다');
+    return;
+  }
+  assert.equal(tools.length, names.length, '매니페스트 수와 도구 수가 다릅니다');
+  assert.deepEqual(tools.map((t) => t.name), names.map((n) => `skill_${n.replace(/-/g, '_')}`).sort());
+  // 오너 경계로 설치 보류된 항목이 api 경로로 새지 않는지(게이트 관철).
+  for (const held of ['k-skill-setup', 'gov-overseas-trip-report', 'corporate-registration-consulting']) {
+    assert.ok(!names.includes(held), `보류분이 노출됐습니다: ${held}`);
+  }
+  assert.ok(tools.every((t) => /^[a-zA-Z0-9_-]{1,128}$/.test(t.name)), '도구 이름 규격 위반');
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { isSkillTool, skillBody } from './skills.js';
 
 /**
  * 심링크·정션까지 해소한 실제 경로를 기준으로 루트 포함 여부를 판정한다.
@@ -256,13 +257,22 @@ function globToRegex(pattern) {
   return new RegExp(`^${re}$`);
 }
 
-/** 도구 실행 진입점. 결과는 문자열로 정규화하고 상한을 적용한다. */
+/**
+ * 도구 실행 진입점. 결과는 문자열로 정규화하고 상한을 적용한다.
+ *
+ * 스킬 도구(`skill_*`)는 이름이 설치본에 따라 달라져 TOOLS 에 미리 넣을 수 없다.
+ * 로컬 본문 조회는 읽기 전용이라 승인 게이트에 넣지 않는다 — 실제 위험 동작은
+ * 전부 `bash` 를 거치고 `bash` 는 이미 승인 대상이다.
+ */
 export async function execTool(name, input, cfg, ctx) {
   const fn = TOOLS[name];
-  if (!fn) throw new Error(`알 수 없는 도구: ${name}`);
-  const result = await fn(cfg, input || {}, ctx);
+  const skill = !fn && isSkillTool(name);
+  if (!fn && !skill) throw new Error(`알 수 없는 도구: ${name}`);
+  const result = skill ? skillBody(name) : await fn(cfg, input || {}, ctx);
   const text = typeof result === 'string' ? result : JSON.stringify(result);
-  if (text.length > cfg.toolResultCap) {
+  // 스킬 본문은 자체 상한(SKILL_BODY_CAP)을 이미 통과했다. 여기서 다시 8,000자로 자르면
+  // 지침 중간이 잘려 그 스킬의 경계 조항이 사라진다.
+  if (!skill && text.length > cfg.toolResultCap) {
     return (
       text.slice(0, cfg.toolResultCap) +
       `\n... [truncated ${text.length - cfg.toolResultCap} chars — narrow the query]`
