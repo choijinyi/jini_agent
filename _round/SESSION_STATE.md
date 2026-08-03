@@ -138,7 +138,9 @@ k-skill 을 쓴다는 것은 **에이전트가 제3자 파이썬 코드를 런�
 - `09687db` docs(readme): 설치 시 스킬 확인 절차 · +11,221 호출마다 지불 명시
 - `33bbaef` feat(skills): 벤더 CLI 호출을 **로컬 사본으로 우회**(instruct·files·exec)
 - `093ac65` feat(skills): `--check-upstream` — 고정 커밋 vs upstream 최신을 읽기 전용으로 보고
-- `81ff99f` docs(evidence): 최종 검증 문서 + 상태 갱신   ← **재개 시점 HEAD**
+- `81ff99f` docs(evidence): 최종 검증 문서 + 상태 갱신
+- `ac02bbe` feat(install): 설치 마지막에 스킬 개수·잔여 위험 고지 + 배포 목록 정합
+  ← **현재 HEAD (worker-2 실측 2026-08-03 16:51:52)**
 
 ### 이 구간에 쓰인 파일 (master 실측 mtime)
 `src/tools/skills-verify.js` 15:57:02 · `install.sh` 15:56:39 · `install.ps1` 15:56:29 ·
@@ -155,6 +157,25 @@ k-skill 을 쓴다는 것은 **에이전트가 제3자 파이썬 코드를 런�
 ### 재개 후 할 일
 1. **가장 먼저** `git log --oneline -5` 와 `git status --short` 를 실행해 위 기재와 대조하라.
    어긋나면 **git 이 이긴다** — 이 문서를 고쳐라.
-2. 남은 항목: regex vs bm25 2안 비교 · 캐시 히트 후 실비용 재측정 · selftest 최종 · README 마감.
-3. worker(surface:56)가 커밋 `7db905e` 스냅샷으로 **독립 검증** 중이다. 그 반증이 오면 그것이 우선한다.
-4. `lofi-factory` 는 네 담당이 아니다.
+2. worker(surface:56)가 커밋 `7db905e` 스냅샷으로 **독립 검증** 중이다. 그 반증이 오면 그것이 우선한다.
+3. `lofi-factory` 는 네 담당이 아니다.
+
+### ★2026-08-03 16:5x 갱신 (worker-2 · git 실측 후) — master 큐가 전부 소진됐다
+
+master 의 16:0x 지시는 1~5순위를 남은 일로 열거했으나, **git 실측 결과 전부 커밋돼 있다.**
+master 스냅샷 자체가 낡았다(그 지시는 HEAD 를 `7db905e` 로 봤는데 실제로는 6커밋 뒤였다).
+
+| master 큐 | git 실측 | 커밋 |
+|---|---|---|
+| ★1 설치 스크립트에 스킬 반영 | **완료** | `b24aea5` + `09687db` + `ac02bbe` |
+| 2 로컬 instruction.md 우회(instruct+exec) | **완료** | `33bbaef` |
+| 3 `--check-upstream` 읽기 전용 | **완료** | `093ac65` |
+| 4 regex vs bm25 2안 비교 | **완료**(bm25 미측정 명시) | `_round/evidence/b-plan-prefix-measurement.md` §5 |
+| 5 README | **완료** | `09687db` · `67f3d61` · `ac02bbe` |
+
+E4 실측값은 README 168~171행에 그대로 남겨 뒀다(낙관 서술로 바꾸지 않았다) —
+`+11,221 호출마다 지불` · `59,728 / 59,734` · `0.4071 → 0.3760 USD, 7.6%`.
+
+**남은 것은 새 지시 대기뿐이다.** 미측정 4종은 §4 에 그대로 있다.
+별건 2개 master 판정 대기: ⓐ`WORKER_TODO.md` 의 `javis:todo` 선언 3개(집계 누락 위험) ·
+ⓑ`javis_task.py` 가 Windows 에서 `import fcntl` 로 죽어 E1 증거게이트가 구조적으로 우회됨.
