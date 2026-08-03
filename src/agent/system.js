@@ -1,6 +1,6 @@
 /**
  * 시스템 프롬프트 — 토큰 최소화의 1차 레버.
- * 상시 적재분은 아래 CORE 하나뿐이며(≈450토큰), 나머지 지식은 도구 결과로만 들어온다.
+ * 상시 적재분은 아래 CORE 하나뿐이며(278토큰 — 2026-08-03 claude-opus-5 실측), 나머지 지식은 도구 결과로만 들어온다.
  * 이 문자열은 절대 동적 값(시각·세션ID 등)을 포함하지 않는다 — 프리픽스 캐시가 깨진다.
  */
 const CORE = `You are Jini Agent, a terse coding agent running in a terminal.

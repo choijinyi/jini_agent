@@ -22,7 +22,8 @@
   "scripts": {
     "start": "node ./bin/jini.js",
     "ui": "electron ./app",
-    "selftest": "node ./src/selftest.js"
+    "selftest": "node ./src/selftest.js",
+    "skills:install": "node ./src/tools/skills-install.js"
   },
   "license": "MIT"
 }

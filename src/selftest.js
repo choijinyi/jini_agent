@@ -29,6 +29,7 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, SAFE_NAME } from './tools/skills-install.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -714,6 +715,59 @@ await check('단계 실패는 파이프라인을 죽이지 않고 결과에 기�
   assert.equal(errs[0].id, 'b');
   assert.match(out.results.b.text, /실패: codex 다운/);
   assert.equal(out.final, '부분 취합');
+});
+
+// ── 스킬 채택 게이트 회귀 (master 지시 — 설치기 실결함 2건 고정) ──────────────
+
+await check('회귀: 허용목록의 모든 등급 키가 반영된다(승인분 조용한 누락 방지)', () => {
+  // 실결함: loadAllowlist 가 T1·T2 만 하드코딩해 읽어 master 가 새로 승인한 20개를 무시했다.
+  const f = path.join(tmp, 'allow.json');
+  fs.writeFileSync(
+    f,
+    JSON.stringify({
+      source: { repo: 'x/y', commit: 'z', npx_pin: '0.0.0' },
+      approved: { T1: ['aa'], T2: ['bb'], 'T3_나중에_추가된_등급': ['cc'] },
+    })
+  );
+  const { names } = loadAllowlist(f);
+  assert.deepEqual(names.sort(), ['aa', 'bb', 'cc'], '새 등급 키가 누락됨');
+});
+
+await check('회귀: 허용목록 이탈분은 디스크에서 제거된다(승인 철회가 가능해야 한다)', () => {
+  // 실결함: 허용목록에서 빼도 디렉터리가 남아 승인 철회가 불가능했다.
+  const dir = fs.mkdtempSync(path.join(tmp, 'skills-'));
+  for (const n of ['keep-me', 'revoked']) {
+    fs.mkdirSync(path.join(dir, n));
+    fs.writeFileSync(path.join(dir, n, 'SKILL.md'), `---\nname: ${n}\n---\n`);
+  }
+  fs.writeFileSync(path.join(dir, 'PROVENANCE.json'), '{}'); // 파일은 건드리지 않는다
+  const pruned = pruneExtraneous(dir, ['keep-me']);
+  assert.deepEqual(pruned, ['revoked']);
+  assert.ok(fs.existsSync(path.join(dir, 'keep-me')), '승인분이 지워졌습니다');
+  assert.ok(!fs.existsSync(path.join(dir, 'revoked')), '철회분이 남았습니다');
+  assert.ok(fs.existsSync(path.join(dir, 'PROVENANCE.json')), '파일까지 지웠습니다');
+});
+
+await check('npx 부동 semver 고정은 멱등이다(이중 치환 없음)', () => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'pin-'));
+  const f = path.join(dir, 'SKILL.md');
+  fs.writeFileSync(f, `run npx -y @nomadamas/k-skill@0 instruct x\nand @nomadamas/k-skill@0 exec y\n`);
+  const a = pinNpxVersion(dir, '0.2.2');
+  assert.equal(a.hits, 2);
+  const once = fs.readFileSync(f, 'utf8');
+  const b = pinNpxVersion(dir, '0.2.2'); // 두 번째 실행
+  assert.equal(b.hits, 0, '이미 고정된 문자열을 다시 치환했습니다');
+  assert.equal(fs.readFileSync(f, 'utf8'), once, '재실행이 내용을 바꿨습니다');
+  assert.ok(!once.includes('@0.2.2.2'), '이중 치환이 발생했습니다');
+});
+
+await check('스킬 이름 화이트리스트가 경로 조작을 거부한다', () => {
+  for (const bad of ['../etc', 'a/b', 'C:/x', '.hidden', 'UPPER', '']) {
+    assert.ok(!SAFE_NAME.test(bad), `허용되면 안 되는 이름: ${bad}`);
+  }
+  for (const ok of ['korean-humanizer', 'k-dart', 'hwp']) {
+    assert.ok(SAFE_NAME.test(ok), `허용돼야 하는 이름: ${ok}`);
+  }
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });
