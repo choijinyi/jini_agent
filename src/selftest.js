@@ -39,6 +39,7 @@ import {
   parseFrontmatter,
   skillBody,
   manifestNames,
+  rewriteVendorCommand,
   SAFETY,
   SKILLS_ROOT,
 } from './tools/skills.js';
@@ -965,6 +966,51 @@ await check('실측: 설치본 노출 목록 = plugin.json 목록 · 보류분 �
     assert.ok(!names.includes(held), `보류분이 노출됐습니다: ${held}`);
   }
   assert.ok(tools.every((t) => /^[a-zA-Z0-9_-]{1,128}$/.test(t.name)), '도구 이름 규격 위반');
+});
+
+await check('벤더 CLI 우회: instruct·files 는 프로세스 없이 로컬 본문으로 답한다', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  fs.writeFileSync(path.join(dir, 'solo', 'instruction.md'), '로컬 전체 지침');
+  fs.mkdirSync(path.join(dir, 'solo', 'scripts'));
+  fs.writeFileSync(path.join(dir, 'solo', 'scripts', 'run.py'), 'print(1)\n');
+
+  const ins = rewriteVendorCommand('npx -y @nomadamas/k-skill@0.2.2 instruct solo', dir);
+  assert.equal(ins.kind, 'text');
+  assert.ok(ins.text.startsWith(SAFETY) && ins.text.includes('로컬 전체 지침'));
+
+  const files = rewriteVendorCommand('npx -y @nomadamas/k-skill@0.2.2 files solo', dir);
+  assert.equal(files.kind, 'text');
+  assert.ok(files.text.includes('scripts/run.py'));
+});
+
+await check('벤더 CLI 우회: exec 는 로컬 사본 실행으로 재작성되고 그 사실을 밝힌다', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  fs.mkdirSync(path.join(dir, 'solo', 'scripts'));
+  fs.writeFileSync(path.join(dir, 'solo', 'scripts', 'run.py'), 'print(1)\n');
+  const r = rewriteVendorCommand(
+    'npx -y @nomadamas/k-skill@0.2.2 exec solo scripts/run.py -- --flag v',
+    dir
+  );
+  assert.equal(r.kind, 'argv');
+  assert.equal(r.bin, 'python3');
+  // 문자열이 아니라 argv 로 돌려준다 — 셸 재해석 여지를 없앤다.
+  assert.deepEqual(r.argv, [path.join(dir, 'solo', 'scripts', 'run.py'), '--flag', 'v']);
+  assert.ok(r.note.includes('로컬 사본'), '바꿔치기를 알리지 않습니다');
+});
+
+await check('벤더 CLI 우회 negative: 경로 탈출·미설치·미지원 확장자·무관 명령은 손대지 않는다', () => {
+  const dir = fakeSkillRoot({ solo: skillMd('solo', '설명') });
+  fs.mkdirSync(path.join(dir, 'solo', 'scripts'));
+  fs.writeFileSync(path.join(dir, 'solo', 'scripts', 'run.py'), 'print(1)\n');
+  fs.writeFileSync(path.join(dir, 'solo', 'scripts', 'data.bin'), 'x');
+  const none = [
+    'npx -y @nomadamas/k-skill@0.2.2 exec solo ../../../etc/passwd', // 경로 탈출
+    'npx -y @nomadamas/k-skill@0.2.2 exec nosuch scripts/run.py', // 미설치 스킬
+    'npx -y @nomadamas/k-skill@0.2.2 exec solo scripts/data.bin', // 실행기 모름
+    'npx -y @nomadamas/k-skill@0.2.2 exec solo missing.py', // 없는 파일
+    'ls -la', // 무관 명령
+  ];
+  for (const c of none) assert.equal(rewriteVendorCommand(c, dir), null, `가로채면 안 됨: ${c}`);
 });
 
 // ── 설치 시 스킬 정합 검증(오너 지시: clone + install 만으로 자동 적용 · 실패 금지) ────────

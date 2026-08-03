@@ -213,3 +213,56 @@ export function skillBody(toolName, root = SKILLS_ROOT) {
 
   return `${SAFETY}\n\n${body}\n\n${note}`;
 }
+
+/** 확장자별 실행기. 모르는 확장자는 재작성하지 않는다(추측 실행 금지). */
+const RUNNER = { '.py': 'python3', '.js': 'node', '.mjs': 'node', '.sh': 'bash' };
+
+/**
+ * 스킬 지침이 지시하는 벤더 CLI 호출을 **로컬 사본**으로 돌린다.
+ *
+ * 벤더링을 해도 스킬 본문은 여전히 `npx -y @nomadamas/k-skill@... <sub> ...` 를 지시한다.
+ * 모델이 그대로 따르면 네트워크로 나가고, 우리가 감사한 바이트가 아니라 그 시점 npm 판본이 실행된다.
+ * 그래서 `bash` 도구 앞단에서 세 하위명령을 가로챈다.
+ *
+ * @returns {null | {kind:'text', text:string} | {kind:'argv', bin:string, argv:string[], note:string}}
+ *   `text` 는 프로세스를 아예 띄우지 않는다(instruct·files — 읽기만 하면 되는 것들).
+ *   `argv` 는 로컬 사본을 **셸 없이** 실행할 인자다(exec). 문자열로 되돌리지 않으므로
+ *   경로에 든 공백·`$`·따옴표가 셸에 재해석될 여지가 없다.
+ *   `null` 은 우리가 다룰 대상이 아니라는 뜻 — 원래 명령을 그대로 실행한다.
+ */
+export function rewriteVendorCommand(command, root = SKILLS_ROOT) {
+  const m = /@nomadamas\/k-skill(?:@[\w.\-]+)?\s+(instruct|files|exec)\s+([^\s'"]+)([\s\S]*)$/.exec(
+    String(command)
+  );
+  if (!m) return null;
+  const [, sub, rawName, rest] = m;
+  if (!SAFE_NAME.test(rawName)) return null;
+  const dir = path.join(root, rawName);
+  if (!fs.existsSync(dir)) return null; // 설치본에 없는 스킬 — 우리가 대신할 것이 없다
+
+  if (sub === 'instruct') return { kind: 'text', text: skillBody(toolNameFor(rawName), root) };
+  if (sub === 'files') {
+    const files = bundledFiles(dir);
+    return {
+      kind: 'text',
+      text: `[jini] 로컬 사본의 동봉 파일 (${dir})\n${files.join('\n') || '(없음)'}`,
+    };
+  }
+
+  // exec — 첫 인자가 스킬 디렉터리 안의 상대 경로여야 한다. `--` 뒤는 스크립트 인자로 넘긴다.
+  const parts = rest.trim().split(/\s+/).filter(Boolean);
+  const rel = parts.shift();
+  if (!rel) return null;
+  const target = path.resolve(dir, rel);
+  if (path.relative(dir, target).startsWith('..') || !fs.existsSync(target)) return null;
+  const runner = RUNNER[path.extname(target).toLowerCase()];
+  if (!runner) return null; // 실행기를 모르면 손대지 않는다
+
+  const args = parts[0] === '--' ? parts.slice(1) : parts;
+  return {
+    kind: 'argv',
+    bin: runner,
+    argv: [target, ...args],
+    note: `[jini] 벤더 CLI 대신 로컬 사본을 실행한다: ${target}`,
+  };
+}

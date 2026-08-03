@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { isSkillTool, skillBody } from './skills.js';
+import { isSkillTool, skillBody, rewriteVendorCommand } from './skills.js';
 
 /**
  * 심링크·정션까지 해소한 실제 경로를 기준으로 루트 포함 여부를 판정한다.
@@ -148,6 +148,14 @@ const TOOLS = {
   },
 
   async bash(cfg, { command, timeout = 60000 }) {
+    // 스킬 지침이 지시하는 벤더 CLI 호출은 로컬 사본으로 돌린다(네트워크·부동 판본 회피).
+    // 바꿔치기는 조용히 하지 않는다 — 무엇으로 바꿨는지 결과 앞줄에 찍는다.
+    const local = rewriteVendorCommand(command);
+    if (local?.kind === 'text') return local.text;
+    if (local?.kind === 'argv') {
+      // 셸을 거치지 않고 실행한다 — 경로·인자가 셸 메타문자로 재해석될 여지를 없앤다.
+      return `${local.note}\n${await runArgv(local.bin, local.argv, cfg.cwd, timeout)}`;
+    }
     return run(command, cfg.cwd, timeout);
   },
 
