@@ -29,7 +29,7 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
-import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME, applyBodyPolicy, scanBodyPolicy, PENDING_JUDGMENT } from './tools/skills-install.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME, applyBodyPolicy, scanBodyPolicy, PENDING_JUDGMENT, POLICY_GROUPS, buildModifications } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -1329,6 +1329,65 @@ await check('선언된 예외는 설치 검증 출력에 드러난다 — 조용
     assert.ok(out.includes(p.at), `예외 위치가 출력되지 않았습니다: ${p.at}`);
   }
   assert.ok(!/정책 예외 1건:/.test(out), '개수를 하드코딩한 출력이 남아 있습니다');
+});
+
+// ── PROVENANCE 원장 재생성 정합 (worker 최종 재검증 반증 · 2026-08-03) ──────────────
+// 반증: 치환 코드와 modifications 나열이 **따로** 있어서 계열이 늘 때 원장 나열을 빼먹었다.
+// 코드 3항목 대 파일 5항목으로 벌어졌고, skills:install 을 한 번 돌리면 B‴·A″ 기록이 사라진다.
+// 「은닉은 안 된다」는 원칙이 재설치 시점에 깨지는 구조적 결함이다.
+
+await check('원장 재생성: modifications 는 계열 표에서 생성된다 — 손 나열이 아니다', () => {
+  const groups = {};
+  for (const g of POLICY_GROUPS) groups[g.key] = { files: 1, hits: 2 };
+  const mods = buildModifications({ pin: { files: 3, hits: 4 }, npxPin: '0.2.2', groups });
+
+  assert.equal(mods.length, 1 + POLICY_GROUPS.length, '항목 수가 계열 수와 맞지 않습니다');
+  assert.match(mods[0].what, /@nomadamas\/k-skill@0\.2\.2/, '첫 항목이 npx 핀이 아닙니다');
+  assert.equal(mods[0].occurrences, 4);
+  POLICY_GROUPS.forEach((g, i) => {
+    const m = mods[i + 1];
+    assert.equal(m.what, g.what, `${g.key} 기재문이 계열 표와 다릅니다`);
+    assert.ok(m.why && m.why.length > 30, `${g.key} 에 why 가 없습니다(은닉 금지)`);
+    assert.equal(m.files, 1);
+    assert.equal(m.occurrences, 2);
+  });
+});
+
+await check('원장 재생성: 건수 0 인 계열도 항목을 남긴다 — 사라지면 미검사와 구별 안 된다', () => {
+  const groups = {};
+  for (const g of POLICY_GROUPS) groups[g.key] = { files: 0, hits: 0 };
+  const mods = buildModifications({ pin: { files: 0, hits: 0 }, npxPin: '0.2.2', groups });
+  assert.equal(mods.length, 1 + POLICY_GROUPS.length, '0건 계열이 목록에서 사라졌습니다');
+  assert.ok(mods.every((m) => m.occurrences === 0));
+});
+
+await check('★원장 재생성 = 커밋본 정합: 계열명·개수가 어긋나면 재설치가 기록을 지운다', () => {
+  // 이 검사가 없어서 코드 3 대 파일 5 가 아무에게도 안 걸렸다(skills-verify 도 modifications 를
+  // 참조하지 않았다 — 참조 0회 실측). 이제 계열명까지 대조한다.
+  const committed = JSON.parse(
+    fs.readFileSync(path.join(SKILLS_ROOT, 'PROVENANCE.json'), 'utf8')
+  ).modifications;
+
+  assert.equal(
+    committed.length,
+    1 + POLICY_GROUPS.length,
+    `커밋본 ${committed.length}항목 대 코드 ${1 + POLICY_GROUPS.length}항목 — 재설치 시 기록이 사라진다`
+  );
+
+  // 커밋본 2항목에는 손으로 붙인 파일·줄 목록 접미가 남아 있다(`… (coupang 137·142 …)`).
+  // 그 줄번호는 **치환 직후 이미 낡는다** — 내용이 바뀌면 줄이 밀린다. 그래서 계열 표의
+  // `what` 은 변경 내용만 적고, 정량은 files/occurrences 가, 줄 단위 감사는
+  // verification.md §9~§12 표가 진다. 대조는 그 휘발성 접미를 벗기고 **계열**을 본다.
+  // 백틱은 마크다운 서식이지 내용이 아니다 — 커밋본은 백틱 없이, 계열 표는 백틱을 달고 적혀 있다.
+  // 서식 차이로 정합 검사가 깨지면 검사가 내용을 못 보고 표기를 보게 된다.
+  const stripVolatile = (s) => s.replace(/\s*\([^()]*\d[^()]*\)\s*$/, '').replace(/`/g, '');
+  POLICY_GROUPS.forEach((g, i) => {
+    assert.equal(
+      stripVolatile(committed[i + 1].what),
+      stripVolatile(g.what),
+      `계열 ${g.key} 의 기재문이 커밋본과 다릅니다(원장이 코드와 갈렸다)`
+    );
+  });
 });
 
 await check('실측: 이 저장소 출고 본문에 정책 위반 잔존 0 (전수 재스캔)', () => {

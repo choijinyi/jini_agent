@@ -82,9 +82,12 @@ export function pinNpxVersion(dir, version) {
  * SAFETY 규약 + **벤더 본문**이고, 머리말에서 없앤 두 결함이 본문에 그대로 남아 있었다.
  * 손편집하면 재설치에 되살아나므로 `pinNpxVersion` 과 같은 층(설치기)에 넣는다.
  *
- * ⚠순서 의존: B′ 를 먼저 돌려야 한다. A′ 를 먼저 돌리면 B′ 문장이
- * 「승인 게이트 통과 후 공식 결제 표면으로 완료한다」로 바뀌어 **경계 위반이 그대로 남는다.**
- * `applyBodyPolicy` 가 그 순서를 강제한다.
+ * ⚠**정정(2026-08-03 실측)**: 이 자리에 「A′ 를 먼저 돌리면 경계 위반이 살아남으므로 순서 의존이
+ * 있다」고 적어 뒀었는데 **그 주장은 틀렸다.** 상류 원문으로 양쪽 순서를 돌려 보니 결과가
+ * **바이트 동일**이고 어느 쪽도 위반을 남기지 않는다. B 계열 패턴이 A 계열이 건드리지 않는
+ * 부분(`결제 자동화 금지는 …`·`승인되면 결제를 실행`·`돌쇠…확인했다`)에 걸리기 때문이다.
+ * 유효한 교훈은 순서가 아니라 **기전과 목표를 함께 고쳐야 한다**는 것이다 — A′(도구 이름)만
+ * 고치면 B 계열(결제를 완료하라는 목표)은 **패턴이 따로 있어야** 잡힌다.
  */
 
 /** B′: 결제 실행까지 밀어붙이는 문장. 오너 경계(실행·예약·결제 금지)와 정면 충돌한다. */
@@ -104,8 +107,9 @@ export const PAYMENT_OVERRIDE_TEXT =
  * A′ 치환만으로는 부족하다: 도구 이름을 실재 기전으로 바꿔도 **「결제를 완료해야 끝」이라는 목표가
  * 그대로 남기 때문이다.** 기전을 고치고 목표를 두면 모델은 여전히 결제로 향한다.
  *
- * 장바구니 담기(`장바구니에 담긴 것을 확인했다`)는 **일부러 건드리지 않았다** — 결제·예약이 아니고
- * 오너·master 가 지적한 경계도 그것이 아니다. 판단이 필요한 항목이라 master 에 올린다.
+ * (장바구니 담기는 처음에 「결제·예약이 아니다」라고 보고 남겨 뒀으나, master 판정으로
+ *  경계에 해당한다고 확정돼 아래 `ACCOUNT_STATE_PAIRS` 에서 처리한다 — 기준은 가역성이 아니라
+ *  오너의 실제 계정에 상태를 만드느냐다.)
  */
 export const PAYMENT_DONE = /^-\s*돌쇠.*(결제|주문번호|예매|예약 흐름).*확인했다.*$/gm;
 
@@ -174,7 +178,6 @@ export const PAYMENT_DONE_TEXT =
  * 줄째 치환하면 **보호까지 지워 퇴행**한다. 그래서 `[^.\n]*` 로 마침표를 넘지 않게 하고
  * 앞머리(불릿·번호)는 캡처해 되살린다.
  */
-const CRED = '`request_vault_credential`';
 export const CREDENTIAL_PAIRS = [
   // 불릿 줄 — foresttrip:45 · ktx:41 · srt:35 (뒤에 보호 문구가 남는다)
   [
@@ -232,19 +235,122 @@ function rewrite(dir, pairs) {
   return { files, hits };
 }
 
-/** 출고 본문 정책 치환. 치환 후 잔존을 스스로 검사해 반환한다(멱등 — 재실행 시 hits 0). */
+/**
+ * ★출고 본문 정책 **계열 표**. 치환 규칙과 원장(PROVENANCE `modifications`) 기재문을
+ * **한 곳에 묶는다.**
+ *
+ * 이 표가 존재하는 이유: 이전에는 치환 코드와 `modifications` 나열이 **따로** 있었고,
+ * 계열을 추가할 때 치환만 늘리고 원장 나열을 빼먹어 **코드 3항목 대 파일 5항목**으로 벌어졌다
+ * (worker 최종 재검증 반증). 그 상태로 `skills:install` 을 한 번 돌리면 B‴·A″ 두 기록이
+ * **조용히 사라진다** — 바로 위 주석이 「은닉은 안 된다」고 적어 둔 원칙이 재설치 시점에 깨지는 것이다.
+ * 그래서 원장을 **손으로 나열하지 않고 실제 적용 결과에서 생성**한다
+ * (설치 검증의 예외 개수를 `PENDING_JUDGMENT.length` 로 뽑은 것과 같은 원리).
+ *
+ * 순서 주의(실측 결과 — 추정이 아니다): 계열 간 적용 순서는 **결과에 영향을 주지 않는다.**
+ * B 계열 패턴은 A 계열이 건드리지 않는 부분(`결제 자동화 금지는 …`·`승인되면 결제를 실행`·
+ * `돌쇠…확인했다`)에 걸리기 때문이다. 상류 원문으로 양쪽 순서를 돌려 **바이트 동일**을 확인했다.
+ * 그래도 B 계열을 앞에 두는 배치는 유지한다 — 패턴이 나중에 좁아지면 순서가 실제로 문제될 수 있고,
+ * 앞에 두는 데 드는 비용이 0 이기 때문이다.
+ */
+export const POLICY_GROUPS = [
+  {
+    key: 'boundary',
+    what:
+      '「결제 자동화 금지는 generic fallback에만 적용한다 … 공식 결제 표면으로 완료한다」(Notes 절) 및 ' +
+      '「돌쇠의 … 요청이면 승인 후 결제 완료 상태를 확인했다」(Done when 절) → ' +
+      '「결제·예매는 대신 완료하지 않는다 …」',
+    why:
+      '상류 원문이 특정 환경에서는 결제를 완료하라고 예외를 두고, 완료 조건(Done when)까지 결제 완료로 ' +
+      '못박았다. jini 경계는 설치는 하되 실행·예약·결제를 금지한다. 정면 충돌이라 우리 정책 문구로 ' +
+      '대체했다. 삭제가 아니라 치환이며 무엇을 왜 바꿨는지 여기 남긴다.',
+    pairs: [
+      [PAYMENT_OVERRIDE, PAYMENT_OVERRIDE_TEXT],
+      [PAYMENT_DONE, PAYMENT_DONE_TEXT],
+    ],
+  },
+  {
+    key: 'clarify',
+    what: '`clarify` 도구 호출 지시 → 승인 게이트(`write`·`edit`·`bash`·`git`) 문구',
+    why:
+      'jini 에 `clarify` 라는 도구는 존재하지 않는다(실도구 10종에 없음). 모델이 부를 수 없는 도구로 ' +
+      '승인을 받으라고 지시하면 안전 절차가 실행되지 않는데 문서상으로는 안전 조항이 있는 상태가 된다 — ' +
+      '조항이 없는 것보다 나쁘다(거짓 보증). 실재하는 기전인 NEEDS_APPROVAL 승인 게이트로 이름을 ' +
+      '바꿨다. 조항을 옮긴 것이 아니라 기전을 실재화한 것이다.',
+    pairs: [
+      [CLARIFY_AFTER, CLARIFY_AFTER_TEXT],
+      [CLARIFY_CALL, CLARIFY_CALL_TEXT],
+    ],
+  },
+  {
+    key: 'account-state',
+    what:
+      '결제·주문 실행 지시 및 오너 계정 상태 생성(장바구니) 지시 → ' +
+      '「실행하지 않고 공식 표면 링크와 확인 항목을 넘긴다」',
+    why:
+      '경계의 기준은 가역성이 아니라 에이전트가 오너의 실제 계정에 상태를 만드느냐다. 상류는 ' +
+      '「장바구니 담기는 가역적이므로 별도 승인 없이 수행」이라고 적었으나 그 근거를 기각했다. ' +
+      '「승인되면 결제를 실행하고」는 승인 요청 줄 바로 다음 줄에 있어, 승인 문구만 고치면 ' +
+      '문장이 그럴듯해지고 실행 지시는 그대로 남는다 — 기전과 목표를 함께 고쳐야 한다.',
+    pairs: ACCOUNT_STATE_PAIRS,
+  },
+  {
+    key: 'credential',
+    what:
+      '부재 자격증명 도구 호출 지시(`request_vault_credential` · `vault-run` capability) → ' +
+      '「자격증명은 사용자가 직접 입력한다 …」',
+    why:
+      '`request_vault_credential` 과 `vault-run` 은 jini 에 존재하지 않는 도구다(실도구 10종에 없음) — ' +
+      '`clarify` 와 같은 계열이며 기전 없는 조항이다. 특히 로그인 정보를 저장한 뒤 재개하라는 지시는 ' +
+      '「자격증명 대행 금지」 조항과 정면 충돌한다. 문장 단위로 치환했다 — 같은 줄 뒤쪽의 보호 문구' +
+      '(ID/PW 원문을 채팅·shell 에 넣지 않는다)와 generic fallback 환경변수 경로를 통째 치환으로 ' +
+      '지우면 그것이 퇴행이기 때문이다.',
+    pairs: CREDENTIAL_PAIRS,
+  },
+];
+
+/**
+ * 출고 본문 정책 치환. 치환 후 잔존을 스스로 검사해 반환한다(멱등 — 재실행 시 hits 0).
+ *
+ * 반환값의 `groups` 가 원장 생성의 **유일한 입력**이다. 계열을 추가하면 치환·원장·검사가
+ * 함께 늘어난다 — 한쪽만 늘어나는 상태가 이번 반증의 원인이었다.
+ */
 export function applyBodyPolicy(dir) {
-  const payment = rewrite(dir, [
-    [PAYMENT_OVERRIDE, PAYMENT_OVERRIDE_TEXT], // B′ (Notes 절)
-    [PAYMENT_DONE, PAYMENT_DONE_TEXT], // B″ (Done when 절)
-    ...ACCOUNT_STATE_PAIRS, // B‴ (실행 지시·계정 상태 생성) — 전부 A′ 보다 먼저
-  ]);
-  const clarify = rewrite(dir, [
-    [CLARIFY_AFTER, CLARIFY_AFTER_TEXT],
-    [CLARIFY_CALL, CLARIFY_CALL_TEXT],
-  ]);
-  const credential = rewrite(dir, CREDENTIAL_PAIRS);
-  return { payment, clarify, credential, residual: scanBodyPolicy(dir) };
+  const groups = {};
+  for (const g of POLICY_GROUPS) groups[g.key] = rewrite(dir, g.pairs);
+  return {
+    groups,
+    // 아래는 읽는 쪽 편의를 위한 별칭이다(원장 생성에는 쓰지 않는다).
+    payment: {
+      files: groups.boundary.files + groups['account-state'].files,
+      hits: groups.boundary.hits + groups['account-state'].hits,
+    },
+    clarify: groups.clarify,
+    credential: groups.credential,
+    residual: scanBodyPolicy(dir),
+  };
+}
+
+/**
+ * PROVENANCE `modifications` 를 **실제 적용 결과에서 생성**한다. 손으로 나열하지 않는다.
+ *
+ * 건수가 0 인 계열도 남긴다 — 「이 판본에는 해당 결함이 없었다」는 것도 기록이고,
+ * 항목이 사라지면 원장을 읽는 사람이 「검사하지 않았다」와 구별할 수 없다.
+ */
+export function buildModifications({ pin, npxPin, groups }) {
+  return [
+    {
+      what: `@nomadamas/k-skill@0 → @nomadamas/k-skill@${npxPin}`,
+      why: '부동 semver(@0=0.x 전체) 제거. 지침 조회·helper 실행 경로를 감사한 판본에 고정한다.',
+      files: pin.files,
+      occurrences: pin.hits,
+    },
+    ...POLICY_GROUPS.map((g) => ({
+      what: g.what,
+      why: g.why,
+      files: groups[g.key].files,
+      occurrences: groups[g.key].hits,
+    })),
+  ];
 }
 
 /**
@@ -411,34 +517,14 @@ export function install({ tarball } = {}) {
         commit,
         installed: placed.length,
         // 상류 원문에 우리가 가한 변경은 반드시 여기 적는다. MIT 라 변경은 허용되지만 은닉은 안 된다.
-        modifications: [
-          {
-            what: `@nomadamas/k-skill@0 → @nomadamas/k-skill@${doc.source.npx_pin}`,
-            why: '부동 semver(@0=0.x 전체) 제거. 지침 조회·helper 실행 경로를 감사한 판본에 고정한다.',
-            files: pin.files,
-            occurrences: pin.hits,
-          },
-          {
-            what:
-              '「결제 자동화 금지는 generic fallback에만 적용한다 … 공식 결제 표면으로 완료한다」 ' +
-              '→ 「결제·예매·발권은 이 스킬이 대신 완료하지 않는다 …」',
-            why:
-              '상류 원문이 특정 환경에서는 결제를 완료하라고 예외를 두는데, jini 경계는 ' +
-              '설치는 하되 실행·예약·결제를 금지한다. 정면 충돌이라 우리 정책 문구로 대체했다. 삭제가 아니라 치환이다.',
-            files: body.payment.files,
-            occurrences: body.payment.hits,
-          },
-          {
-            what: '`clarify` 도구 호출 지시 → 승인 게이트(`write`·`edit`·`bash`·`git`) 문구',
-            why:
-              'jini 에 `clarify` 라는 도구는 존재하지 않는다(실도구 10종에 없음). 모델이 부를 수 없는 ' +
-              '도구로 승인을 받으라고 지시하면 안전 절차가 실행되지 않는데 문서상으로는 안전 조항이 있는 ' +
-              '상태가 된다 — 조항이 없는 것보다 나쁘다(거짓 보증). 실재하는 기전인 NEEDS_APPROVAL 승인 ' +
-              '게이트로 이름을 바꿨다. 조항을 옮긴 것이 아니라 기전을 실재화한 것이다.',
-            files: body.clarify.files,
-            occurrences: body.clarify.hits,
-          },
-        ],
+        // ★손으로 나열하지 않는다 — POLICY_GROUPS 와 실제 적용 결과에서 생성한다.
+        //   이전에는 여기에 3항목만 적혀 있어서, 계열을 늘릴 때 원장 나열을 빼먹으면
+        //   재설치 한 번으로 기록이 조용히 사라졌다(worker 최종 재검증 반증).
+        modifications: buildModifications({
+          pin,
+          npxPin: doc.source.npx_pin,
+          groups: body.groups,
+        }),
         names: placed.sort(),
       },
       null,
