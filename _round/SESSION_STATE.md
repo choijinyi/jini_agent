@@ -24,17 +24,36 @@
 - 영속화 기전 소급 검사(설치분 전수): crontab·launchd·schtasks·HKCU Run·systemd·shell rc **전부 0건**
 - selftest **52개 통과 · exit 0** (기존 48 + 회귀 4)
 
-**안 끝난 것 = 재개 지점**
-1. **E1 배선** — `src/providers/index.js` claude `buildArgs` 에 **조건부** `--plugin-dir <skillsDir>`
-   (스킬 디렉터리 실재 시에만. 없으면 argv 바이트 동일 = 기존 사용자 무영향)
-2. 설치기가 `.claude-plugin/plugin.json` 생성(승인분만 나열 — 게이트가 런타임까지 관철되는 지점)
-3. api 경로 (b)안 배선: 스킬 1개 = 지연로딩 도구 1개 + 기존 `tool_search`
-4. 스킬 로더가 **로컬 `instruction.md` 직접 제공**(npx 우회 1차 방어). 벤더 Runtime rules 머리말은
-   복사하지 말고 **우리 문구를 짧게**. README 에 "상류 npx 출력에는 있고 우리 경로에는 없는 것" 명시
-5. `--plugin-dir` **캐시 히트 후 실비용** 측정 → README 병기(첫 호출 +11,221 만으로 단정 금지)
-6. **regex vs bm25 2안 실측 비교**(같은 질의 5종으로 적중 스킬 대조) — k-skill 설명문이 한국어 산문이라
-   regex 리터럴이 불리할 공산. clear 이후 수행
-7. selftest 추가분(§3) · README 갱신
+**안 끝난 것 = 재개 지점** (2026-08-03 15:2x 갱신 — E1 계열은 끝났다)
+
+> ⚠ 이전 판본은 재개 지점을 "2.3b E1 배선"으로 적었다. **그건 이미 끝났다.**
+> 커밋 `7cb3257` 이후의 실제 재개 지점은 아래 1번이다.
+
+1. **api 경로 (b)안 배선** — 스킬 1개 = 지연로딩 도구 1개 + 기존 `tool_search`.
+   `registry.js` 도구 배열은 **이름 오름차순 고정**(성공기준 3 개정본 — 목록이 흔들리면 캐시가 날아간다).
+   `cfg.deferTools === false` 분기에서는 스킬을 **넣지 않는다**(프리픽스 폭발 방지).
+2. **로컬 우회 구현** — 스킬 로더가 로컬 `instruction.md` 를 직접 제공(네트워크·부동 @0 미경유).
+   벤더 Runtime rules 머리말은 복제하지 않고 **우리 안전 문구**를 쓴다
+   (정본: `_round/evidence/runtime-rules-coverage.md` §4. R3·R4 를 상류보다 엄격하게 덮었음이 검증됨).
+   `exec` 도 로컬 `skills/<name>/scripts/` 사본으로 실행.
+3. **`--check-upstream`** — `skills:install` 에 고정 커밋 vs upstream latest 차이를 **읽기 전용**으로
+   보고하는 경로(자동 갱신 금지).
+4. **README** — ①갱신 3단 절차(커밋 재고정 → skillscan 재실행 → 면제기록 재발행)
+   ②잔여 위험 문구(제거가 아니라 고정·선별·기록) ③실측 토큰치(아래 §4) ④상류 npx 출력에는 있고
+   우리 경로에는 없는 것 = 벤더 생성 머리말 ⑤`flight-ticket-search` 실행 시 pip install·venv 생성 고지
+5. selftest 추가분 · 최종 성공기준 5종 대비 검증 보고
+
+**끝난 것 추가분 (커밋 7cb3257)**
+- **E1 배선**: `providers/index.js` 조건부 `--plugin-dir` + `skillsPluginDir()`.
+  매니페스트 부재 시 argv 바이트 동일(무영향 보장) · gemini·codex argv 무변경 ·
+  **호출부(cli.js·app/main.js·pipeline) 무수정**
+- **plugin.json 생성**: 승인 120개 · 이름 오름차순 고정 · 보류 유입 0
+- **E2E 실증**: `runProvider('claude')` 경로에서 승인 korean- 16 = 모델 보고 16 완전일치 ·
+  보류분 누출 0 · `k-skill-setup` 미노출 · 미승인 항목 0 → **설치 목록 = 노출 목록**
+- **F1 조건 이행**: 상류 머리말은 13줄이 아니라 **규칙 5항목**. 안전 제약은 R3·R4 둘이고 둘 다
+  우리 문구가 더 엄격하게 덮음. 발견 결함 2건 — ①R3 이 지시하는 `clarify` 도구가 jini 에 **없다**
+  ②R2 는 실행을 밀어붙이는 조항이라 우리 경계와 반대(의도적 배제)
+- **selftest 57개 통과 exit 0** (기존 48 + 게이트 회귀 4 + E1 5)
 
 ## 2. ★성공기준 3 개정 (master 판정 — 지켜야 할 대상은 파일이 아니라 캐시다)
 
@@ -61,6 +80,10 @@
 - 총 프롬프트 토큰 = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`
 - 실측 확인: 4회 반복에서 `cache_read` 24,883 고정 · `input_tokens` 2 고정 → 차분에 잡음 없음
 - 기존 실측치: CORE 278 · 얇은색인 +7,272 · 전체색인 +12,666 · `--plugin-dir`(99개) +11,221
+- **캐시 실측(E4 조건①)**: 동일 호출 2회 총 프롬프트 토큰 **59,728 / 59,734 — 거의 동일**.
+  jini 는 매 턴 `claude -p` 를 일회성으로 띄워 세션이 새로 잡히므로 **프리픽스가 캐시에서 읽히지 않는다**.
+  금액만 0.4071 → 0.3760 USD(7.6% 감소). **+11,221 은 호출마다 지불된다** —
+  "반복 호출은 캐시가 흡수한다"는 내 이전 서술은 **실측으로 반증됐다. README 에 측정값을 적을 것.**
 - **바이트 수로 결론짓지 말고 차분 실측으로 갈 것.**
 
 ## 5. 건드리면 안 되는 것
