@@ -50,7 +50,7 @@ function run(bin, args, opts = {}) {
  * 뒤에 숫자·점이 오면 매칭하지 않는다 — 이미 고정된 문자열을 다시 치환해 `@0.2.2.2.2` 를
  * 만드는 것을 막는다(멱등).
  */
-const NPX_FLOATING = /(@nomadamas\/k-skill)@0(?![\d.])/g;
+export const NPX_FLOATING = /(@nomadamas\/k-skill)@0(?![\d.])/g;
 
 export function pinNpxVersion(dir, version) {
   let files = 0;

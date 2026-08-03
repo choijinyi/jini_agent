@@ -1,0 +1,125 @@
+/**
+ * 설치된 스킬의 정합 검증. `npm run skills:verify`
+ *
+ * **네트워크를 타지 않는다.** `skills/` 는 저장소에 함께 추적되므로 clone 만으로 이미 배치돼 있다.
+ * 이 스크립트가 하는 일은 받아오는 것이 아니라 **받아온 것이 맞는지 확인하는 것**이다.
+ *
+ * 판정 3종:
+ *  - `none`  스킬이 없다(매니페스트 부재). 설치 실패가 아니다 — 에이전트는 스킬 없이 정상 동작한다.
+ *  - `ok`    아래 5개 검사 전부 통과.
+ *  - `fail`  하나라도 어긋남. **설치를 중단시키지는 않되** 무엇이 어긋났는지 이름을 찍는다.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { SKILLS_DIR, loadAllowlist, NPX_FLOATING } from './skills-install.js';
+import { loadSkills, manifestNames } from './skills.js';
+
+/** 상류 부동 semver(`@0`)가 스킬 콘텐츠에 남아 있는지 전수 검사. */
+export function scanFloating(dir) {
+  const hits = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(md|txt)$/i.test(e.name)) continue;
+      const n = (fs.readFileSync(p, 'utf8').match(NPX_FLOATING) || []).length;
+      if (n) hits.push({ file: path.relative(dir, p), count: n });
+    }
+  };
+  walk(dir);
+  return hits;
+}
+
+export function verify(dir = SKILLS_DIR, { allowlistFile } = {}) {
+  const manifest = manifestNames(dir);
+  if (!manifest) return { status: 'none', checks: [] };
+
+  const dirs = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== '.claude-plugin')
+    .map((e) => e.name)
+    .sort();
+
+  const provenance = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(dir, 'PROVENANCE.json'), 'utf8'));
+    } catch {
+      return null;
+    }
+  })();
+
+  const { names: approved } = allowlistFile ? loadAllowlist(allowlistFile) : loadAllowlist();
+  const { skills, skipped } = loadSkills(dir);
+  const floating = scanFloating(dir);
+  const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  const sorted = [...manifest].sort();
+
+  const checks = [
+    {
+      name: '매니페스트 = 디스크 디렉터리',
+      ok: eq(sorted, dirs),
+      detail: `매니페스트 ${manifest.length} · 디스크 ${dirs.length}`,
+      extra: () => [
+        ...dirs.filter((d) => !sorted.includes(d)).map((d) => `매니페스트에 없는 디렉터리: ${d}`),
+        ...sorted.filter((m) => !dirs.includes(m)).map((m) => `디스크에 없는 항목: ${m}`),
+      ],
+    },
+    {
+      name: '매니페스트 = 채택 게이트 허용목록',
+      ok: eq(sorted, [...approved].sort()),
+      detail: `허용목록 ${approved.length}`,
+      extra: () => sorted.filter((m) => !approved.includes(m)).map((m) => `승인되지 않은 노출: ${m}`),
+    },
+    {
+      name: '매니페스트 = PROVENANCE 기록',
+      ok: Boolean(provenance) && eq(sorted, [...(provenance.names || [])].sort()),
+      detail: provenance ? `PROVENANCE ${(provenance.names || []).length}` : 'PROVENANCE.json 없음',
+      extra: () => [],
+    },
+    {
+      name: '이름 오름차순 고정',
+      ok: eq(manifest, sorted),
+      detail: '순서가 흔들리면 프롬프트 캐시가 무효화된다',
+      extra: () => [],
+    },
+    {
+      name: '부동 semver(@0) 잔존 0',
+      ok: floating.length === 0,
+      detail: `잔존 ${floating.length}건`,
+      extra: () => floating.slice(0, 10).map((h) => `${h.file}: ${h.count}건`),
+    },
+    {
+      name: '도구 노출 가능(frontmatter 파싱)',
+      ok: skills.length === manifest.length,
+      detail: `노출 ${skills.length} / 제외 ${skipped.length}`,
+      extra: () => skipped.map((s) => `${s.name}: ${s.reason}`),
+    },
+  ];
+
+  return {
+    status: checks.every((c) => c.ok) ? 'ok' : 'fail',
+    count: manifest.length,
+    commit: provenance?.commit,
+    checks,
+  };
+}
+
+function main() {
+  const r = verify();
+  if (r.status === 'none') {
+    console.log('[skills] 설치된 스킬 없음 — 에이전트는 스킬 없이 정상 동작한다.');
+    console.log('[skills] 스킬을 쓰려면: npm run skills:install');
+    return 0;
+  }
+  console.log(`[skills] ${r.count}개 · 고정 커밋 ${(r.commit || '?').slice(0, 12)}`);
+  for (const c of r.checks) {
+    console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name} (${c.detail})`);
+    if (!c.ok) for (const line of c.extra()) console.log(`       - ${line}`);
+  }
+  return r.status === 'ok' ? 0 : 1;
+}
+
+if (process.argv[1]?.endsWith('skills-verify.js')) process.exit(main());

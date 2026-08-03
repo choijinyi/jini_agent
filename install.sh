@@ -43,6 +43,14 @@ if ! (cd "$DIR" && node src/selftest.js); then
   exit 1
 fi
 
+# 스킬 확인 — skills/ 는 저장소에 함께 추적되므로 clone 만으로 이미 배치돼 있다.
+# 여기서 네트워크로 다시 받지 않는다. 받는 것이 아니라 **맞는지 확인**하는 단계다.
+# 스킬이 없거나 어긋나도 설치를 중단하지 않는다 — 에이전트는 스킬 없이도 동작한다.
+info '스킬 확인'
+if ! (cd "$DIR" && node src/tools/skills-verify.js); then
+  warn '스킬 정합에 어긋난 항목이 있습니다(설치는 계속합니다). 위 FAIL 줄을 확인하세요.'
+fi
+
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/jini" <<EOF
 #!/usr/bin/env bash

@@ -31,6 +31,8 @@ import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
 import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, SAFE_NAME } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
+import { fileURLToPath } from 'node:url';
+import { verify as verifySkills, scanFloating } from './tools/skills-verify.js';
 import {
   skillTools,
   loadSkills,
@@ -963,6 +965,83 @@ await check('실측: 설치본 노출 목록 = plugin.json 목록 · 보류분 �
     assert.ok(!names.includes(held), `보류분이 노출됐습니다: ${held}`);
   }
   assert.ok(tools.every((t) => /^[a-zA-Z0-9_-]{1,128}$/.test(t.name)), '도구 이름 규격 위반');
+});
+
+// ── 설치 시 스킬 정합 검증(오너 지시: clone + install 만으로 자동 적용 · 실패 금지) ────────
+
+/** 정합이 맞는 스킬 루트 한 벌(매니페스트 + PROVENANCE + 허용목록)을 만든다. */
+function verifiableSkillRoot(names, { manifest = names, provenance = names, extraFile } = {}) {
+  const dir = fakeSkillRoot(Object.fromEntries(names.map((n) => [n, skillMd(n, `${n} 설명`)])), {
+    manifest,
+  });
+  fs.writeFileSync(
+    path.join(dir, 'PROVENANCE.json'),
+    JSON.stringify({ repo: 'x/y', commit: 'c'.repeat(40), names: provenance })
+  );
+  const allow = path.join(dir, 'allow.json');
+  fs.writeFileSync(
+    allow,
+    JSON.stringify({ source: { repo: 'x/y', commit: 'c', npx_pin: '0.2.2' }, approved: { T1: names } })
+  );
+  if (extraFile) fs.writeFileSync(path.join(dir, names[0], extraFile.name), extraFile.body);
+  return { dir, allowlistFile: allow };
+}
+
+await check('설치 검증: 스킬이 없으면 none 이고 설치를 실패시키지 않는다', () => {
+  // 오너 조건 — 스킬 부재는 결함이 아니다. 에이전트는 스킬 없이 동작한다.
+  const empty = fs.mkdtempSync(path.join(tmp, 'noskill-'));
+  assert.equal(verifySkills(empty).status, 'none');
+});
+
+await check('설치 검증: 정합이면 ok — 매니페스트·디스크·PROVENANCE·허용목록 4자 일치', () => {
+  const { dir, allowlistFile } = verifiableSkillRoot(['alpha', 'beta']);
+  const r = verifySkills(dir, { allowlistFile });
+  assert.equal(r.status, 'ok', r.checks.filter((c) => !c.ok).map((c) => c.name).join(', '));
+  assert.equal(r.count, 2);
+});
+
+await check('설치 검증: 매니페스트에 없는 디렉터리가 남아 있으면 잡아낸다', () => {
+  // 승인 철회 후 디렉터리만 남는 상황 = 회수되지 않은 게이트.
+  const { dir, allowlistFile } = verifiableSkillRoot(['alpha', 'beta'], {
+    manifest: ['alpha'],
+    provenance: ['alpha'],
+  });
+  const r = verifySkills(dir, { allowlistFile });
+  assert.equal(r.status, 'fail');
+  const hit = r.checks.find((c) => c.name.includes('디스크 디렉터리'));
+  assert.ok(!hit.ok);
+  assert.ok(hit.extra().some((l) => l.includes('beta')), 'beta 를 지목하지 못했습니다');
+});
+
+await check('설치 검증: 부동 semver(@0) 잔존을 잡아낸다', () => {
+  const { dir, allowlistFile } = verifiableSkillRoot(['alpha'], {
+    extraFile: { name: 'instruction.md', body: 'npx -y @nomadamas/k-skill@0 instruct alpha\n' },
+  });
+  const r = verifySkills(dir, { allowlistFile });
+  assert.equal(r.status, 'fail');
+  assert.ok(!r.checks.find((c) => c.name.includes('부동 semver')).ok);
+  // 고정판은 잔존으로 세지 않는다(멱등 경계).
+  fs.writeFileSync(
+    path.join(dir, 'alpha', 'instruction.md'),
+    'npx -y @nomadamas/k-skill@0.2.2 instruct alpha\n'
+  );
+  assert.equal(scanFloating(dir).length, 0);
+});
+
+await check('설치 스크립트는 스킬을 네트워크에서 다시 받지 않는다(확인만 한다)', () => {
+  // 오너 경계 — skills/ 는 git 추적분이다. 설치기가 받는 순간 고정 커밋 보장이 깨진다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  for (const f of ['install.sh', 'install.ps1']) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(src.includes('skills-verify.js'), `${f} 에 스킬 확인 단계가 없습니다`);
+    assert.ok(!/skills-install\.js|skills:install|codeload/.test(src), `${f} 가 스킬을 내려받습니다`);
+  }
+});
+
+await check('실측: 이 저장소의 스킬 정합', () => {
+  // 스킬 미설치 클론에서도 도는 테스트 — 그때는 none 이 정답이다.
+  const r = verifySkills();
+  assert.ok(['ok', 'none'].includes(r.status), `정합 실패: ${JSON.stringify(r.checks?.filter((c) => !c.ok))}`);
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });
