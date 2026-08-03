@@ -76,6 +76,27 @@ export function pinNpxVersion(dir, version) {
 }
 
 /**
+ * Claude Code 플러그인 매니페스트를 쓴다. 벤더 CLI 는 이 파일의 `skills` 목록만 보므로
+ * **설치 목록이 곧 노출 목록**이 된다 — 채택 게이트가 런타임까지 관철되는 지점이다.
+ *
+ * 목록은 항상 **이름 오름차순으로 정렬**한다. 순서가 흔들리면 프리픽스가 바뀌어
+ * 프롬프트 캐시가 무효화된다(성공기준 3 — 지켜야 할 대상은 파일이 아니라 캐시다).
+ */
+export function writePluginManifest(dir, names) {
+  const manifest = {
+    name: 'jini-k-skill',
+    description: 'jini 벤더링 k-skill — 채택 게이트 통과분만',
+    version: '1.0.0',
+    license: 'MIT',
+    skills: [...names].sort().map((n) => `./${n}`),
+  };
+  const out = path.join(dir, '.claude-plugin');
+  fs.mkdirSync(out, { recursive: true });
+  fs.writeFileSync(path.join(out, 'plugin.json'), JSON.stringify(manifest, null, 2) + '\n');
+  return manifest;
+}
+
+/**
  * 허용목록에 없는 스킬 디렉터리를 지운다.
  *
  * 이게 없으면 승인을 철회해도 이미 배치된 디렉터리가 남아 계속 노출된다.
@@ -86,7 +107,7 @@ export function pruneExtraneous(dir, keepNames) {
   const pruned = [];
   for (const d of fs.readdirSync(dir)) {
     const p = path.join(dir, d);
-    if (!fs.statSync(p).isDirectory() || keep.has(d)) continue;
+    if (!fs.statSync(p).isDirectory() || keep.has(d) || d === '.claude-plugin') continue;
     fs.rmSync(p, { recursive: true, force: true });
     pruned.push(d);
   }
@@ -135,6 +156,7 @@ export function install({ tarball } = {}) {
   const pruned = pruneExtraneous(SKILLS_DIR, placed);
 
   const pin = pinNpxVersion(SKILLS_DIR, doc.source.npx_pin);
+  writePluginManifest(SKILLS_DIR, placed);
 
   // 라이선스 고지. 루트 MIT 원문을 함께 둔다(스킬별 LICENSE.upstream 은 디렉터리째 복사되므로 자동 동봉).
   fs.copyFileSync(path.join(base, 'LICENSE'), path.join(SKILLS_DIR, 'LICENSE.k-skill'));

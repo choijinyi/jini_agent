@@ -29,7 +29,8 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
-import { loadAllowlist, pruneExtraneous, pinNpxVersion, SAFE_NAME } from './tools/skills-install.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, SAFE_NAME } from './tools/skills-install.js';
+import { skillsPluginDir } from './providers/index.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jini-'));
 const cfg = { ...DEFAULTS, cwd: tmp, model: 'claude-opus-5' };
@@ -768,6 +769,45 @@ await check('스킬 이름 화이트리스트가 경로 조작을 거부한다',
   for (const ok of ['korean-humanizer', 'k-dart', 'hwp']) {
     assert.ok(SAFE_NAME.test(ok), `허용돼야 하는 이름: ${ok}`);
   }
+});
+
+// ── E1 배선: CLI 백엔드 스킬 주입 (master 승인 · E4 조건 ②) ─────────────────
+
+await check('E1: 스킬 디렉터리가 있으면 claude argv 에 --plugin-dir 이 붙는다', () => {
+  const a = PROVIDERS.claude.buildArgs({ pluginDir: 'C:/x/skills' });
+  const i = a.indexOf('--plugin-dir');
+  assert.ok(i > 0, '--plugin-dir 이 없습니다');
+  assert.equal(a[i + 1], 'C:/x/skills');
+});
+
+await check('E1 회귀: 스킬 디렉터리가 없으면 argv 가 종전과 바이트 동일하다', () => {
+  // master E4 조건 ② — 스킬 미설치 사용자에게 무영향이어야 한다.
+  assert.deepEqual(PROVIDERS.claude.buildArgs({}), ['-p', '--output-format', 'json']);
+  assert.deepEqual(PROVIDERS.claude.buildArgs({ pluginDir: null }), ['-p', '--output-format', 'json']);
+  assert.deepEqual(PROVIDERS.claude.buildArgs({ model: 'claude-opus-5' }), [
+    '-p', '--output-format', 'json', '--model', 'claude-opus-5',
+  ]);
+});
+
+await check('E1: 미승인 백엔드(gemini·codex) argv 는 변경되지 않는다', () => {
+  // master E2(gemini 보류)·E3(codex 미지원) 판정 — 이 둘은 건드리지 않는다.
+  assert.deepEqual(PROVIDERS.gemini.buildArgs({ pluginDir: '/x' }), ['-p', '', '-o', 'json', '--yolo']);
+  assert.deepEqual(PROVIDERS.codex.buildArgs({ pluginDir: '/x' }), ['exec', '-', '--json']);
+});
+
+await check('E1: 매니페스트가 없으면 skillsPluginDir 은 null 이다', () => {
+  const empty = fs.mkdtempSync(path.join(tmp, 'noskills-'));
+  assert.equal(skillsPluginDir(empty), null);
+});
+
+await check('게이트 관철: plugin.json 은 승인분만·이름 오름차순으로 고정된다', () => {
+  // 목록 순서가 흔들리면 프리픽스가 바뀌어 캐시가 무효화된다(성공기준 3 개정본).
+  const dir = fs.mkdtempSync(path.join(tmp, 'manifest-'));
+  const m = writePluginManifest(dir, ['zebra', 'alpha', 'mid']);
+  assert.deepEqual(m.skills, ['./alpha', './mid', './zebra'], '정렬이 고정되지 않았습니다');
+  const again = writePluginManifest(dir, ['mid', 'zebra', 'alpha']); // 입력 순서만 다름
+  assert.deepEqual(again.skills, m.skills, '입력 순서에 따라 목록이 흔들립니다');
+  assert.ok(fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json')));
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

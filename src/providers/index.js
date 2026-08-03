@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 /**
  * 프로바이더 계층 — 계정 로그인으로 인증된 벤더 CLI 를 헤드리스로 1회 실행한다.
@@ -33,10 +34,15 @@ export const PROVIDERS = {
     bin: 'claude',
     role: '오케스트레이션·코딩·심층추론',
     versionArgs: ['--version'],
-    buildArgs({ model, session } = {}) {
+    buildArgs({ model, session, pluginDir } = {}) {
       const a = ['-p', '--output-format', 'json'];
       if (model) a.push('--model', safeToken(model, 'model'));
       if (session) a.push('--resume', safeToken(session, 'session'));
+      // 스킬 주입. pluginDir 이 없으면 이 줄은 없는 것과 같다 — 스킬 미설치 사용자의
+      // argv 는 바이트 단위로 종전과 동일하다(무영향 보장).
+      // safeToken 을 태우지 않는 이유: 이건 사용자 입력이 아니라 우리 패키지 경로이고,
+      // 윈도 경로의 `:` `\` 가 SAFE 화이트리스트에 걸린다. 셸을 안 거치므로 주입 위험은 없다.
+      if (pluginDir) a.push('--plugin-dir', pluginDir);
       return a;
     },
     parse: parseClaude,
@@ -218,10 +224,28 @@ export function spawnCli(bin, args, { cwd, env, input, timeout = 600_000 } = {})
  * 프로바이더 1회 호출.
  * @returns {{text:string, usage:object, session:?string, model:?string, provider:string}}
  */
-export async function runProvider(id, prompt, { cwd, model, session, timeout, claudeConfigDir } = {}) {
+/**
+ * 벤더링된 스킬 플러그인 디렉터리. 매니페스트가 실재할 때만 경로를 돌려준다.
+ *
+ * 스킬을 설치하지 않은 사용자에게는 null 이 나가고 argv 가 종전과 동일해진다
+ * — 확장이 기존 동작을 건드리지 않는다는 보장이 여기서 나온다(master E4 조건 ②).
+ */
+export function skillsPluginDir(root = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..')) {
+  const dir = path.join(root, 'skills');
+  return fs.existsSync(path.join(dir, '.claude-plugin', 'plugin.json')) ? dir : null;
+}
+
+export async function runProvider(
+  id,
+  prompt,
+  { cwd, model, session, timeout, claudeConfigDir, pluginDir } = {}
+) {
   const spec = PROVIDERS[id];
   if (!spec) throw new Error(`알 수 없는 프로바이더: ${id} (${Object.keys(PROVIDERS).join(', ')})`);
-  const args = spec.buildArgs({ model, session });
+  // claude 만 플러그인 주입을 받는다. gemini 는 영속 상태 변경(skills link)을 요구해 보류,
+  // codex 는 스킬 기전 미발견 — master E2·E3 판정.
+  const plug = id === 'claude' ? (pluginDir !== undefined ? pluginDir : skillsPluginDir()) : undefined;
+  const args = spec.buildArgs({ model, session, pluginDir: plug });
   const env = id === 'claude' ? claudeEnv(claudeConfigDir) : undefined;
   const r = await spawnCli(spec.bin, args, { cwd, input: prompt, timeout, env });
   if (r.code !== 0 && !r.stdout.includes('{')) {
