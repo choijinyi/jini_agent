@@ -12,3 +12,7 @@
 2026-08-03T15:16:11+09:00	Stop	cwd=C:/Users/chlwl/jini-agent
 2026-08-03T15:17:04+09:00	Stop	cwd=C:/Users/chlwl/jini-agent
 2026-08-03T15:19:07+09:00	Stop	cwd=C:/Users/chlwl/jini-agent
+2026-08-03T15:21:07+09:00	Stop	cwd=C:/Users/chlwl/jini-agent
+2026-08-03T15:21:07+09:00	WARN:bloat	SESSION_STATE=8290B>8192 — 완료항목 정리(스냅샷 유지) 필요
+2026-08-03T15:26:03+09:00	Stop	cwd=C:/Users/chlwl/jini-agent
+2026-08-03T15:26:03+09:00	WARN:bloat	SESSION_STATE=8290B>8192 — 완료항목 정리(스냅샷 유지) 필요

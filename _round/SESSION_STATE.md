@@ -4,6 +4,10 @@
 > 이 레인의 정본 설계는 `~/.cys/pack-dept-dept-2/round/WORKER2_PHASE1_DESIGN.md` ·
 > `WORKER2_PHASE2_DESIGN.md`, todo 는 같은 폴더 `WORKER_2_TODO.md` 다.
 
+> **[CYCLE 저장 지점 · 2026-08-03 15:3x · ctx 68]** 컨텍스트 순환 직전 저장.
+> **재개 후 첫 액션 = api 경로 (b)안 배선**(§1 재개지점 1번). 2.3b E1 배선은 **이미 끝났다**.
+> 미해결 게이트: 없음(E1~E4·D7·F1·PE2 전부 판정 완료). 진행 중 중단된 편집 없음 — 워킹트리 clean.
+
 ## 1. 지금 어디까지 왔나
 
 **과업**: jini-agent 에 스킬 체계를 신설하고 NomaDamas/k-skill 을 설치해 **자동 적용**시킨다.
