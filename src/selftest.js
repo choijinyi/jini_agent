@@ -29,7 +29,7 @@ import {
 import { Pipeline, parsePlan, toBatches, composeStepPrompt } from './pipeline/engine.js';
 import { SCHEMA, coerce, list as settingsList } from './settings.js';
 import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/server.js';
-import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, SAFE_NAME } from './tools/skills-install.js';
+import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
 import { fileURLToPath } from 'node:url';
 import { verify as verifySkills, scanFloating } from './tools/skills-verify.js';
@@ -1082,6 +1082,44 @@ await check('설치 스크립트는 스킬을 네트워크에서 다시 받지 �
     assert.ok(src.includes('skills-verify.js'), `${f} 에 스킬 확인 단계가 없습니다`);
     assert.ok(!/skills-install\.js|skills:install|codeload/.test(src), `${f} 가 스킬을 내려받습니다`);
   }
+});
+
+await check('--check-upstream: 고정본이 최신이면 차이 0 으로 보고한다', async () => {
+  const { doc } = loadAllowlist();
+  const pinned = doc.source.commit;
+  const r = await checkUpstream({ fetchJson: async () => ({ sha: pinned }) });
+  assert.equal(r.latest, pinned);
+  assert.equal(r.behind, 0);
+  assert.deepEqual(r.changed, []);
+});
+
+await check('--check-upstream: 뒤처졌으면 변경된 최상위 항목을 접어서 보고한다', async () => {
+  const fetchJson = async (url) =>
+    url.includes('/compare/')
+      ? {
+          ahead_by: 3,
+          behind_by: 0,
+          total_commits: 3,
+          files: [
+            { filename: 'korean-humanizer/instruction.md' },
+            { filename: 'korean-humanizer/SKILL.md' }, // 같은 스킬은 하나로 접힌다
+            { filename: 'new-skill/SKILL.md' },
+          ],
+        }
+      : { sha: 'f'.repeat(40) };
+  const r = await checkUpstream({ fetchJson });
+  assert.equal(r.latest, 'f'.repeat(40));
+  assert.equal(r.ahead, 3);
+  assert.deepEqual(r.changed, ['korean-humanizer', 'new-skill']);
+});
+
+await check('--check-upstream 은 읽기 전용 — 설치본을 건드리지 않는다', async () => {
+  // 자동 갱신 지름길이 생기면 채택 게이트(재검사·면제 재발행)가 무력화된다.
+  const manifest = path.join(SKILLS_ROOT, '.claude-plugin', 'plugin.json');
+  const before = fs.existsSync(manifest) ? fs.readFileSync(manifest, 'utf8') : null;
+  await checkUpstream({ fetchJson: async () => ({ sha: 'f'.repeat(40), files: [], ahead_by: 1 }) });
+  const after = fs.existsSync(manifest) ? fs.readFileSync(manifest, 'utf8') : null;
+  assert.equal(after, before, '매니페스트가 바뀌었습니다');
 });
 
 await check('실측: 이 저장소의 스킬 정합', () => {

@@ -198,8 +198,10 @@ api 경로는 모델이 필요할 때 `tool_search` 로 스스로 찾고, 그때
 
 ### 갱신 절차 (3단 — 순서 고정)
 
-1. **커밋 재고정** — `src/tools/skills.allowlist.json` 의 `source.commit`(필요하면 `npx_pin`)을 새 값으로 바꾼다.
-   자동 갱신 경로는 없다(감사한 것만 들어온다는 설계 의도).
+1. **커밋 재고정** — 먼저 `npm run skills:install -- --check-upstream` 으로 고정 커밋과 upstream
+   최신의 차이를 **읽기만** 한다(뒤처진 커밋 수와 바뀐 스킬 이름을 찍고 아무것도 바꾸지 않는다).
+   그다음 `src/tools/skills.allowlist.json` 의 `source.commit`(필요하면 `npx_pin`)을 손으로 바꾼다.
+   자동 갱신 경로는 만들지 않았다 — 지름길이 있으면 아래 2·3단을 건너뛸 수 있기 때문이다.
 2. **skillscan 재실행** — 새 판본 전수를 다시 검사한다. 규칙·`rules.json` 은 고치지 않는다.
 3. **면제기록 재발행** — 위양성 면제는 규칙이 아니라 **그 판본에 대한 판정**이므로 `kskill-waivers.jsonl` 을
    새로 쓴다. 이때 `runtime-rules-coverage.md` 의 대조표도 다시 돌린다(상류 머리말이 바뀌었을 수 있다).
@@ -245,7 +247,7 @@ k-skill 을 쓴다는 것은 **에이전트가 제3자 파이썬 코드를 런�
 ## 개발
 
 ```bash
-npm run selftest   # 네트워크 없이 79개 검증
+npm run selftest   # 네트워크 없이 82개 검증
 npm start          # 로컬 실행
 ```
 

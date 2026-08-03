@@ -188,8 +188,61 @@ export function install({ tarball } = {}) {
   return { placed, pruned, pin, dir: SKILLS_DIR, commit };
 }
 
+/**
+ * 고정 커밋과 upstream 최신의 차이를 **읽기 전용**으로 보고한다. `--check-upstream`
+ *
+ * 자동 갱신 경로는 만들지 않는다 — 갱신은 커밋 재고정 → skillscan 재실행 → 면제기록
+ * 재발행의 3단을 사람이 밟아야 하고, 그 순서를 건너뛰는 지름길이 있으면 게이트가 무력화된다.
+ * 그래서 이 경로는 **알려주기만 하고 아무것도 바꾸지 않는다.**
+ */
+export async function checkUpstream({ fetchJson = defaultFetchJson } = {}) {
+  const { doc } = loadAllowlist();
+  const { repo, commit } = doc.source;
+  const branch = doc.source.branch || 'main';
+  const head = await fetchJson(`https://api.github.com/repos/${repo}/commits/${branch}`);
+  const latest = head.sha;
+  if (latest === commit) return { repo, branch, pinned: commit, latest, behind: 0, changed: [] };
+
+  // 고정본과 최신 사이의 파일 차이. 스킬 디렉터리 이름 단위로 접어서 본다.
+  const cmp = await fetchJson(`https://api.github.com/repos/${repo}/compare/${commit}...${latest}`);
+  const changed = [...new Set((cmp.files || []).map((f) => f.filename.split('/')[0]))].sort();
+  return {
+    repo,
+    branch,
+    pinned: commit,
+    latest,
+    behind: cmp.behind_by ?? (cmp.total_commits || 0),
+    ahead: cmp.ahead_by,
+    changed,
+  };
+}
+
+async function defaultFetchJson(url) {
+  const r = await fetch(url, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'jini-agent' } });
+  if (!r.ok) throw new Error(`GitHub API ${r.status} ${r.statusText} — ${url}`);
+  return r.json();
+}
+
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('skills-install.js')) {
-  const arg = process.argv.indexOf('--tarball');
-  const r = install({ tarball: arg > 0 ? process.argv[arg + 1] : undefined });
-  console.log(`설치 ${r.placed.length}개 · 제거 ${r.pruned.length}개 · npx고정 ${r.pin.hits}곳/${r.pin.files}파일 → ${r.dir}`);
+  if (process.argv.includes('--check-upstream')) {
+    const r = await checkUpstream();
+    console.log(`저장소 ${r.repo}@${r.branch}`);
+    console.log(`  고정 ${r.pinned.slice(0, 12)}`);
+    console.log(`  최신 ${r.latest.slice(0, 12)}`);
+    if (r.latest === r.pinned) {
+      console.log('  차이 없음 — 고정본이 최신이다.');
+    } else {
+      console.log(`  뒤처짐 ${r.ahead ?? r.behind}커밋 · 변경된 최상위 항목 ${r.changed.length}개`);
+      for (const c of r.changed.slice(0, 40)) console.log(`    - ${c}`);
+      if (r.changed.length > 40) console.log(`    ... 외 ${r.changed.length - 40}개`);
+      console.log('\n  이 명령은 아무것도 바꾸지 않았다. 갱신하려면 3단을 밟아라:');
+      console.log('   1) skills.allowlist.json 의 source.commit 재고정');
+      console.log('   2) javis_skillscan 재실행(규칙은 고치지 않는다)');
+      console.log('   3) 면제기록(kskill-waivers.jsonl) 재발행 + runtime-rules 대조표 재실행');
+    }
+  } else {
+    const arg = process.argv.indexOf('--tarball');
+    const r = install({ tarball: arg > 0 ? process.argv[arg + 1] : undefined });
+    console.log(`설치 ${r.placed.length}개 · 제거 ${r.pruned.length}개 · npx고정 ${r.pin.hits}곳/${r.pin.files}파일 → ${r.dir}`);
+  }
 }
