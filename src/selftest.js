@@ -32,6 +32,7 @@ import { createRemoteServer, tokenEquals, genToken, buildUrl } from './remote/se
 import { loadAllowlist, pruneExtraneous, pinNpxVersion, writePluginManifest, checkUpstream, SAFE_NAME } from './tools/skills-install.js';
 import { skillsPluginDir } from './providers/index.js';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { verify as verifySkills, scanFloating } from './tools/skills-verify.js';
 import {
   skillTools,
@@ -1082,6 +1083,96 @@ await check('설치 스크립트는 스킬을 네트워크에서 다시 받지 �
     assert.ok(src.includes('skills-verify.js'), `${f} 에 스킬 확인 단계가 없습니다`);
     assert.ok(!/skills-install\.js|skills:install|codeload/.test(src), `${f} 가 스킬을 내려받습니다`);
   }
+});
+
+await check('설치 스크립트는 스킬 확인을 마지막 단계로 둔다(고지가 마지막에 읽히도록)', () => {
+  // 개수 고지와 잔여 위험 문장이 셈 생성·PATH 안내에 밀려 스크롤 위로 사라지면 고지가 아니다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  for (const [f, tail] of [
+    ['install.sh', 'BIN_DIR'],
+    ['install.ps1', 'shimDir'],
+  ]) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(
+      src.lastIndexOf('skills-verify.js') > src.lastIndexOf(tail),
+      `${f}: 스킬 확인이 셈 생성/PATH 단계보다 앞에 있습니다`
+    );
+  }
+});
+
+await check('설치 스크립트는 스킬 확인 실패로 설치를 중단하지 않는다', () => {
+  // 오너 조건 ③ — 정합이 어긋나도 경고까지다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  // 주석은 걷어내고 **실행되는 줄만** 본다 — 규칙을 설명한 주석이 그 규칙 위반으로 잡히면 안 된다.
+  const code = (s) =>
+    s
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+
+  const sh = fs.readFileSync(path.join(root, 'install.sh'), 'utf8');
+  const shStep = code(sh.slice(sh.lastIndexOf('skills-verify.js')));
+  assert.ok(/^\s*warn /m.test(shStep), 'install.sh: 스킬 확인 실패가 경고로 처리되지 않습니다');
+  assert.ok(!/\bexit\b/.test(shStep), 'install.sh: 스킬 확인 실패가 설치를 중단시킵니다');
+
+  const ps = fs.readFileSync(path.join(root, 'install.ps1'), 'utf8');
+  const psStep = code(ps.slice(ps.lastIndexOf('skills-verify.js')));
+  assert.ok(/^\s*Warn /m.test(psStep), 'install.ps1: 스킬 확인 실패가 경고로 처리되지 않습니다');
+  assert.ok(!/\bexit 1\b|\bthrow\b/.test(psStep), 'install.ps1: 스킬 확인 실패가 설치를 중단시킵니다');
+});
+
+await check('install.ps1 은 스킬 확인을 마지막에 두고도 종료 코드 0 을 돌려준다', () => {
+  // setup.ps1 이 이 스크립트의 종료 코드로 "설치 실패"를 판정하므로, 스킬 경고가
+  // 설치 전체를 뒤집지 않도록 마지막을 exit 0 으로 못박는다(오너 조건 ③).
+  // 실측 주의: 현재 형태(try/finally 로 끝남)에서는 명시적 exit 없이도 0 이 나왔다 —
+  // 이 검사는 살아 있는 버그를 막는 것이 아니라, 편집 한 번으로 그 성질이
+  // 조용히 뒤집히는 것을 막는 회귀 고정이다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  const ps = fs.readFileSync(path.join(root, 'install.ps1'), 'utf8');
+  const psStep = ps.slice(ps.lastIndexOf('skills-verify.js'));
+  assert.ok(/\bexit 0\b/.test(psStep), 'install.ps1: 스킬 확인 뒤에 명시적 exit 0 이 없습니다');
+  assert.ok(
+    ps.trimEnd().endsWith('exit 0'),
+    'install.ps1: exit 0 뒤에 다른 명령이 붙어 종료 코드가 다시 흔들립니다'
+  );
+
+  // 이 계약을 소비하는 쪽이 실제로 종료 코드를 본다는 사실도 함께 고정한다.
+  const setup = fs.readFileSync(path.join(root, 'setup.ps1'), 'utf8');
+  assert.ok(
+    /LASTEXITCODE -ne 0.*throw/s.test(setup),
+    'setup.ps1 의 종료 코드 판정이 사라졌다면 위 계약의 근거를 다시 확인하라'
+  );
+});
+
+await check('스킬 확인은 개수와 잔여 위험을 함께 고지한다 — "안전하다"고 쓰지 않는다', () => {
+  // 지시 3항. 소스 문자열이 아니라 **실제로 찍히는 출력**을 본다
+  // (주석에 규칙을 설명해 둔 것까지 위반으로 잡히면 안 되고, 반대로 고지가 죽어도 알아채야 한다).
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  const r = spawnSync(process.execPath, [path.join('src', 'tools', 'skills-verify.js')], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  const expected = verifySkills();
+
+  if (expected.status === 'none') {
+    // 스킬 없는 체크아웃 — 고지할 스킬이 없으니 위험 문구도 없는 것이 맞다.
+    assert.equal(r.status, 0, '스킬 부재인데 확인 단계가 0 이 아닌 코드로 끝났습니다');
+    assert.match(out, /스킬 없음/);
+    return;
+  }
+  assert.match(out, new RegExp(`스킬 ${expected.count}개`), '개수 고지가 없습니다');
+  assert.match(out, /제3자 파이썬 코드/, '잔여 위험 고지가 없습니다');
+  assert.match(out, /없애지는 않았다/, '제거하지 않았다는 사실이 빠졌습니다');
+  assert.ok(!/안전합니다|안전하다/.test(out), '안전 보증 문구가 출력됐습니다');
+});
+
+await check('배포 목록(package.json files)에 skills 가 들어 있다', () => {
+  // clone 경로와 npm 패키징 경로가 갈리면 한쪽에서만 스킬이 조용히 사라진다.
+  const root = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.ok(pkg.files.includes('skills'), 'files 배열에 skills 가 없습니다');
+  assert.equal(pkg.scripts['skills:verify'], 'node ./src/tools/skills-verify.js');
 });
 
 await check('--check-upstream: 고정본이 최신이면 차이 0 으로 보고한다', async () => {

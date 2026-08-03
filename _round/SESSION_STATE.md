@@ -122,3 +122,39 @@ k-skill 을 쓴다는 것은 **에이전트가 제3자 파이썬 코드를 런�
 이는 이 모음집의 본질적 성질이라 벤더링으로 사라지지 않는다.
 우리가 한 것은 제거가 아니라 **고정·선별·기록**이다.
 추가 고지: `flight-ticket-search` 는 실행 시 네트워크 `pip install` 과 디스크 `venv` 생성이 일어난다.
+
+---
+
+## 7. ★master 가 대신 기재한 구간 (2026-08-03 16:1x · 원장 공백 메움)
+
+> **이 절은 worker-2 가 아니라 master 가 썼다.** 15:54:18 저장 이후 노드가 계속 작업했는데
+> `/clear` 가 큐에 걸려 있어 노드 스스로 원장을 갱신할 틈이 없었다. 재개 시 이 절을 먼저 읽어라.
+
+**★가장 중요 — 아래 파일·커밋은 전부 「네가 한 일」이다. 제3자 변경으로 오독하지 마라.**
+(오늘 다른 워커가 자기 산출물을 남의 변경으로 읽고 작업을 중단한 사고가 실제로 있었다.)
+
+### 이 구간에 커밋된 것 (git 이 정본 — 문서보다 git 을 먼저 믿어라)
+- `b24aea5` feat(install): 설치 시 스킬 정합 확인 — 받지 않고 확인한다
+- `09687db` docs(readme): 설치 시 스킬 확인 절차 · +11,221 호출마다 지불 명시
+- `33bbaef` feat(skills): 벤더 CLI 호출을 **로컬 사본으로 우회**(instruct·files·exec)
+- `093ac65` feat(skills): `--check-upstream` — 고정 커밋 vs upstream 최신을 읽기 전용으로 보고
+- `81ff99f` docs(evidence): 최종 검증 문서 + 상태 갱신   ← **재개 시점 HEAD**
+
+### 이 구간에 쓰인 파일 (master 실측 mtime)
+`src/tools/skills-verify.js` 15:57:02 · `install.sh` 15:56:39 · `install.ps1` 15:56:29 ·
+`package.json` 15:56:04 · `src/tools/skills.js` 16:03:09 · `src/tools/exec.js` 16:03:19 ·
+`src/tools/skills-install.js` 16:05:01 · `src/selftest.js` 16:05:48 · `README.md` 16:06:27 ·
+`_round/evidence/final-verification.md` 16:08:09
+
+### master 확인분 (재작업 금지)
+- **오너 지시(설치 스크립트에 스킬 반영) = 반영됨.** `install.ps1:100` · `install.sh:46` 에 스킬 확인 단계
+  존재하고 `node src/tools/skills-verify.js` 를 호출한다. 주석에 「skills/ 는 저장소에 함께 추적되므로
+  clone 만으로 이미 배치돼 있다」가 명시돼 있다 — **받지 않고 확인한다는 제약이 지켜졌다.**
+- 미커밋은 `_round/.state_log` 하나뿐이었다(로그 파일).
+
+### 재개 후 할 일
+1. **가장 먼저** `git log --oneline -5` 와 `git status --short` 를 실행해 위 기재와 대조하라.
+   어긋나면 **git 이 이긴다** — 이 문서를 고쳐라.
+2. 남은 항목: regex vs bm25 2안 비교 · 캐시 히트 후 실비용 재측정 · selftest 최종 · README 마감.
+3. worker(surface:56)가 커밋 `7db905e` 스냅샷으로 **독립 검증** 중이다. 그 반증이 오면 그것이 우선한다.
+4. `lofi-factory` 는 네 담당이 아니다.

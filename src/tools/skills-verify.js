@@ -114,11 +114,23 @@ function main() {
     console.log('[skills] 스킬을 쓰려면: npm run skills:install');
     return 0;
   }
-  console.log(`[skills] ${r.count}개 · 고정 커밋 ${(r.commit || '?').slice(0, 12)}`);
+  // 개수는 **매니페스트 기준**이다. 정합이 깨진 상태에서 이 숫자를 그대로 "포함돼 있다"로 쓰면
+  // 디스크에 없는 것까지 있다고 말하는 셈이 된다 — 어긋났을 때는 단정하지 않는다.
+  const head =
+    r.status === 'ok'
+      ? `이 설치에는 스킬 ${r.count}개가 포함돼 있다`
+      : `스킬 ${r.count}개가 있어야 하는데 아래 검사에서 어긋난 항목이 있다`;
+  console.log(`[skills] ${head} · 고정 커밋 ${(r.commit || '?').slice(0, 12)}`);
   for (const c of r.checks) {
     console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name} (${c.detail})`);
     if (!c.ok) for (const line of c.extra()) console.log(`       - ${line}`);
   }
+  // 잔여 위험 고지. 설치자가 마지막에 읽는 문장이므로 "안전합니다"라고 쓰지 않는다 —
+  // 우리가 한 것은 제거가 아니라 고정·선별·기록이고, 그 차이를 숨기면 거짓 보증이 된다.
+  console.log('[skills] 남는 위험: 이 스킬들은 실행 시 제3자 파이썬 코드를 돌릴 수 있다.');
+  console.log('[skills]   우리는 그것을 감사한 판본에 고정하고 선별했을 뿐, 그 능력을 없애지는 않았다.');
+  console.log('[skills]   실행은 bash 승인 게이트를 거친다 — 다만 --yolo 로 띄우면 그 게이트가 없다.');
+  console.log('[skills]   자세한 내용은 README 의 "남는 위험" 절을 읽어라.');
   return r.status === 'ok' ? 0 : 1;
 }
 

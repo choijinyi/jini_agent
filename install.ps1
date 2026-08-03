@@ -97,18 +97,6 @@ try {
   }
 } finally { Pop-Location }
 
-# 4-1. 스킬 확인 — skills/ 는 저장소에 함께 추적되므로 clone 만으로 이미 배치돼 있다.
-#      여기서 네트워크로 다시 받지 않는다. 받는 것이 아니라 **맞는지 확인**하는 단계다.
-#      스킬이 없거나 어긋나도 설치를 중단하지 않는다 — 에이전트는 스킬 없이도 동작한다.
-Info '스킬 확인'
-Push-Location $Dir
-try {
-  node src/tools/skills-verify.js
-  if ($LASTEXITCODE -ne 0) {
-    Warn '스킬 정합에 어긋난 항목이 있습니다(설치는 계속합니다). 위 FAIL 줄을 확인하세요.'
-  }
-} finally { Pop-Location }
-
 # 5. 실행 셈(shim) 생성 + PATH 등록
 $shimDir = Join-Path $Dir 'shim'
 New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
@@ -161,3 +149,25 @@ $env:Path = "$env:Path;$shimDir"
 Info "설치 완료: $Dir"
 Info '창 앱: 바탕화면의 "Jini Agent" 아이콘을 더블클릭'
 Info '터미널: jini (대화) · jini ui (창) · jini doctor (계정 로그인 진단)'
+
+# 6. 스킬 확인 — skills/ 는 저장소에 함께 추적되므로 clone 만으로 이미 배치돼 있다.
+#    여기서 네트워크로 다시 받지 않는다. 받는 것이 아니라 **맞는지 확인**하는 단계다.
+#    스킬이 없거나 어긋나도 설치를 중단하지 않는다 — 에이전트는 스킬 없이도 동작한다.
+#    마지막에 두는 이유: 개수 고지와 잔여 위험 문장이 설치자가 마지막으로 읽는 줄이 되게 하려는 것이다.
+Write-Host ''
+Push-Location $Dir
+try {
+  node src/tools/skills-verify.js
+  if ($LASTEXITCODE -ne 0) {
+    Warn '스킬 정합에 어긋난 항목이 있습니다(설치는 계속됩니다). 위 FAIL 줄을 확인하세요.'
+  }
+} finally { Pop-Location }
+
+# 스킬 확인 결과는 설치 성공 여부를 바꾸지 않는다 — 그것을 종료 코드로 못박는다.
+# setup.ps1 은 이 스크립트의 종료 코드를 그대로 "설치 실패" 판정에 쓴다
+# (setup.ps1: `if ($LASTEXITCODE -ne 0) { ... }`). 실측해 보면 현재 형태에서는
+# 명시적 exit 없이도 0 이 나온다(`powershell -File` 은 스크립트가 직접 exit 하지 않으면 0 을 돌려주며,
+# 마지막 네이티브 명령이 실패해도 그렇다 — 대조군 `exit 3`/`throw` 로 비0 감지 가능함을 확인).
+# 그래도 명시해 두는 이유는 이 블록이 파일 맨 끝이라, 나중에 try/finally 를 걷어내거나
+# 줄을 덧붙이는 편집 한 번으로 그 성질이 조용히 바뀔 수 있기 때문이다.
+exit 0
