@@ -128,6 +128,78 @@ jini panel "이 설계의 약점은?"        # 3사 동시 질의 후 나란히 
 > 삭제된 항목: "기계적 보조 작업만 소형 모델로 라우팅" — `pickModel` 은 저장소 어디에서도 호출되지 않는
 > 죽은 코드였다. 문서만 맞추는 대신 함수를 제거했다.
 
+## 스킬 체계 (k-skill 벤더링)
+
+한국 생활·업무용 스킬 모음집 [NomaDamas/k-skill](https://github.com/NomaDamas/k-skill)(MIT)을
+저장소 안에 벤더링해 **양쪽 백엔드에서 자동으로 적용**한다.
+
+```bash
+npm run skills:install   # 고정 커밋 tarball → skills/ 에 승인분만 배치
+```
+
+전역(`-g`) 설치가 아니다. 배치처는 이 저장소의 `skills/` 뿐이고 사용자 홈·다른 프로젝트를 건드리지 않는다.
+
+### 어떻게 적용되는가
+
+| 백엔드 | 주입 방식 | 상시 프리픽스 비용 |
+|---|---|---:|
+| `cli`(기본) | `claude --plugin-dir <repo>/skills` — 세션 한정, 홈·프로젝트 무변경 | +11,221 토큰/호출 |
+| `api` | 스킬 1개 = **지연 로딩 도구 1개**(`defer_loading`) + `tool_search` | **0** |
+
+api 경로는 모델이 필요할 때 `tool_search` 로 스스로 찾고, 그때 그 정의만 컨텍스트에 올라온다
+(검색 1회 최대 5건 = **+835 토큰 실측**). 전 정의를 미리 올렸다면 **+16,166 토큰**이 매 호출 붙는다 —
+그 차이가 지연 로딩을 쓰는 이유다. 측정 방법과 원자료는 `_round/evidence/b-plan-prefix-measurement.md`.
+
+- 노출 목록은 `skills/.claude-plugin/plugin.json` **하나가 정한다** — 두 백엔드가 같은 파일을 본다.
+  매니페스트가 없으면 양쪽 다 스킬 0개다.
+- 목록은 항상 이름 오름차순으로 고정한다. 순서가 흔들리면 도구 배열이 바뀌고 프롬프트 캐시가 통째로 날아간다.
+- `deferTools: false` 로 두면 api 경로에 스킬을 **싣지 않는다**(즉시 로드 분기에 넣으면 프리픽스가 폭증한다).
+
+### 무엇이 걸러졌나
+
+설치 대상은 저장소의 123개 중 **120개**다. 게이트를 통과한 것만 들어온다.
+
+- `javis_skillscan` 전수 검사 → 판정 기록 `_round/evidence/kskill-waivers.jsonl`(123행).
+  면제는 규칙 변경이 아니라 **건별 판정**으로 남긴다(검증 인프라는 손대지 않는다).
+- 제외 3종: `k-skill-setup`(사용자 crontab 에 매일 09:00 작업을 영속 설치하는 안내 포함) ·
+  `gov-overseas-trip-report` · `corporate-registration-consulting`.
+- AGPL-3.0 인 `packages/k-skill-proxy` · `infra/k-skill-proxy-dashboard` 는 이름 화이트리스트 구조상
+  복사될 수 없다. Apache-2.0 2건은 `LICENSE.upstream` 을 동봉한다.
+
+### 상류와 다른 점 (우리가 가한 변경 — 은닉하지 않는다)
+
+`skills/PROVENANCE.json` 의 `modifications` 에 기록돼 있다.
+
+1. **부동 semver 고정**: 스킬 본문의 `@nomadamas/k-skill@0`(0.x 전체를 떠도는 범위) → `@0.2.2`.
+   479곳/177파일. 지침 조회·helper 실행 경로가 감사한 판본에 고정된다.
+2. **로컬 본문 제공**: 스킬 도구는 네트워크(`npx ... instruct`) 대신 **로컬 `instruction.md`** 를 돌려준다.
+   helper 실행도 `skills/<이름>/scripts/` 사본을 쓴다.
+3. **머리말 대체**: 상류 CLI 는 출력 앞에 자체 Runtime rules 를 붙이는데, 우리는 그것을 복제하지 않고
+   **우리 안전 규약**을 붙인다. 그 머리말은 jini 에 존재하지 않는 `clarify` 도구를 부르라고 지시하고,
+   "조회에서 멈추지 말고 실행까지 진행하라"는 우리 경계와 반대인 조항을 포함한다.
+   항목 대 항목 대조는 `_round/evidence/runtime-rules-coverage.md`.
+
+이 트레이드오프는 명시해 둔다: 고정한 대가로 **벤더의 정당한 버그·보안 패치도 자동으로는 들어오지 않는다.**
+
+### 갱신 절차 (3단 — 순서 고정)
+
+1. **커밋 재고정** — `src/tools/skills.allowlist.json` 의 `source.commit`(필요하면 `npx_pin`)을 새 값으로 바꾼다.
+   자동 갱신 경로는 없다(감사한 것만 들어온다는 설계 의도).
+2. **skillscan 재실행** — 새 판본 전수를 다시 검사한다. 규칙·`rules.json` 은 고치지 않는다.
+3. **면제기록 재발행** — 위양성 면제는 규칙이 아니라 **그 판본에 대한 판정**이므로 `kskill-waivers.jsonl` 을
+   새로 쓴다. 이때 `runtime-rules-coverage.md` 의 대조표도 다시 돌린다(상류 머리말이 바뀌었을 수 있다).
+
+### 남는 위험 (없어지지 않는다)
+
+k-skill 을 쓴다는 것은 **에이전트가 제3자 파이썬 코드를 런타임에 실행할 수 있다**는 뜻이며,
+이는 이 모음집의 본질적 성질이라 벤더링으로 사라지지 않는다.
+우리가 한 것은 제거가 아니라 **고정·선별·기록**이다.
+
+- 실행은 전부 `bash` 도구를 거치고 `bash` 는 승인 게이트 대상이다(`--yolo` 면 그 게이트가 없다).
+- `flight-ticket-search` 는 실행 시 네트워크 `pip install` 과 디스크 `venv` 생성이 일어난다.
+- 스킬 본문 앞에는 항상 안전 규약이 붙는다 — 결제·예매·발송·최종 제출·계정 변경 같은 비가역 동작은
+  실행 직전에 멈추고 사용자 승인을 받는다. 자격증명 입력은 대신하지 않는다.
+
 ## 설정
 
 우선순위: `~/.jini/config.json` → 프로젝트 `.jini.json` → CLI 플래그.
@@ -158,7 +230,7 @@ jini panel "이 설계의 약점은?"        # 3사 동시 질의 후 나란히 
 ## 개발
 
 ```bash
-npm run selftest   # 네트워크 없이 13개 검증
+npm run selftest   # 네트워크 없이 70개 검증
 npm start          # 로컬 실행
 ```
 
