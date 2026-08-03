@@ -1,1 +1,2 @@
 - [reflect:auto SHADOW] 2026-08-03 session 57b5074c-75b2-4e79-a555-2be9abea8c3c 마찰신호 3건 — 반복 결함 후보(자동적용0·사람검토). 신호: 틀렸, 하지 마. 근거 예: "[작업 위임 — 절대 강조 4규칙 포함 · work management 앵커] 작업: jini-agent 스킬 체계 신설 + k-skill 모음"
+- [reflect:auto SHADOW] 2026-08-03 session 8dd4d2f7-266d-4e16-8cdf-4681ff238d30 마찰신호 3건 — 반복 결함 후보(자동적용0·사람검토). 신호: 틀린, 하지 마. 근거 예: "[작업 위임 — 절대 강조 4규칙 포함 · work management 앵커] 작업: 설치 스크립트에 스킬 반영 (오너 지시) 범위(이 파일/범"
